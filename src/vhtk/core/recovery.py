@@ -33,8 +33,15 @@ Image: TypeAlias = npt.NDArray[np.uint8]
 # Mỗi nhóm: template nhận diện tình huống -> nút cần bấm để thoát tình huống.
 # Thứ tự kiểm tra quan trọng: mất kết nối / chết / văng login phải xét TRƯỚC
 # popup thường, vì các màn đó cũng có nút đóng chung chung.
-DISCONNECT_MARKERS: tuple[str, ...] = ("common/disconnected",)
-RECONNECT_BUTTONS: tuple[str, ...] = ("common/btn_reconnect", "common/btn_confirm")
+DISCONNECT_MARKERS: tuple[str, ...] = (
+    "common/disconnected",  # "Liên kết máy chủ thất bại..." (nút Trở lại -> về title)
+    "common/patch_net_error",  # "Lỗi mạng khi tải..." của bộ cập nhật (nút Thử lại)
+)
+RECONNECT_BUTTONS: tuple[str, ...] = (
+    "common/btn_retry",  # "Thử lại" — ưu tiên: thử tải tiếp thay vì thoát ra
+    "common/btn_reconnect",  # "Trở lại" — về title, flow login tự định tuyến lại
+    "common/btn_confirm",
+)
 REVIVE_BUTTONS: tuple[str, ...] = ("common/btn_revive",)
 LOGIN_MARKERS: tuple[str, ...] = ("login/title", "login/btn_enter")
 POPUP_CLOSE_BUTTONS: tuple[str, ...] = ("common/btn_close", "common/btn_x")

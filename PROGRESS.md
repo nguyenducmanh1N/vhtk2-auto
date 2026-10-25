@@ -10,10 +10,12 @@ Cập nhật lần cuối: 2026-10-25. Kế hoạch chi tiết từng giai đo�
 | 1 | Tầng điều khiển thiết bị (device, ldplayer) | ✅ Xong, đã verify logic — chờ smoke test trên máy Windows |
 | 2 | Tầng nhận diện màn hình (vision, OCR, phẩm chất đồ) | ✅ Xong, đã verify |
 | 3 | FSM base + safety + recovery | ✅ Xong, đã verify |
-| 4 | Các task nghiệp vụ (login, farm, sell, equipment, gold_transfer) | ⬜ Chưa làm (đang là stub) |
+| 3b | Template `v1.0-avd`: login 16 cái + common 4 cái (disconnected/btn_reconnect/patch_net_error/btn_retry); bag/map/shop chụp khi làm task tương ứng | 🔶 Đủ cho R1 |
+| 4.1 | R1 Login — **✅ NGHIỆM THU ĐẠT trên AVD**: 5/5 lần login liên tiếp (24–29s/lần), idempotent (chạy khi đang in-game → DONE sau 1,6s) | ✅ Xong |
+| 4.2–4.5 | farm, sell, equipment, skill_verify | ⬜ Chưa làm (stub) |
 | 5 | Orchestrator đa instance + notify Telegram | ⬜ Notify: đã có protocol + NullNotifier; Telegram thật và orchestrator chưa làm |
 
-Kiểm tra hiện tại: **110 test pass**, `ruff check` sạch, `mypy --strict` sạch (20 file).
+Kiểm tra hiện tại: **124 test pass**, `ruff check` sạch, `mypy --strict` sạch (20 file).
 
 ## Giai đoạn 0 — Bộ khung
 
@@ -102,7 +104,39 @@ Thêm: `TaskError` (gốc lỗi trong-task, FSM đưa về RECOVER) → `StateTi
 - **`TaskResult`**: `SUCCESS / ABORTED / KILLED / RELOGIN_REQUIRED` + state cuối + lý do +
   số lần recover.
 
-## Test (110 test, không cần thiết bị)
+## Giai đoạn 4.1 — R1 Login (✅ nghiệm thu đạt trên AVD)
+
+### Flow thực tế đã khám phá (game v1.0.32)
+`Title (nút Đăng nhập, server đã lưu hiện sẵn) → dialog SIGN IN (3C/3CID | Play Now)
+→ form "SIGN IN WITH 3CID" (SDK tự nhớ tài khoản nếu "Save Account Information")
+→ Sign In → màn "Chọn nhân vật" → Vào game → HUD`.
+**Cấm kỵ:** không bao giờ bấm "Play Now" (tạo acc khách MỚI); đáp vào màn "Tạo nhân vật"
+= acc chưa có nhân vật trên server → ABORT, người tạo tay một lần.
+
+### `src/vhtk/tasks/login.py`
+- 9 state; mọi bước đáp màn đều qua `wait_any` nên **idempotent** — khởi động từ màn
+  bất kỳ của flow đều tự định tuyến về đích.
+- `relogin_is_normal = True` (cờ mới ở BaseTask): màn login là sân nhà của task này,
+  recovery không được kết thúc task vì "văng về login".
+- `recovery_resume_state() → WAIT_TITLE` (hook mới ở BaseTask): sau recovery, màn hình
+  có thể đã trôi (popup mạng đá về title) nên resume ở state tự định tuyến, không retry
+  mù state cũ.
+- Credentials trống trong account YAML = dùng tài khoản SDK đã lưu; có điền thì tool
+  tự dọn ô nhập (`press_delete`) và gõ lại (`input_text` — 2 method mới của Device,
+  kèm `app_in_foreground` vì game có thể văng về launcher mà process vẫn sống).
+- Toạ độ fallback (ô nhập form, slot nhân vật) trong `config/coordinates.yaml`,
+  mỗi lần dùng có log cảnh báo đúng quy tắc #1.
+
+### Nghiệm thu (2026-10-25, AVD vhtk2-dev)
+- 5/5 lần login liên tiếp từ app tắt hẳn, 24–29s/lần, 0 can thiệp tay.
+- Idempotent: chạy task khi đang trong thế giới → DONE sau 1,6s.
+- Trong quá trình nghiệm thu đã bắt + xử lý được 2 sự cố thật: popup "Liên kết máy chủ
+  thất bại" (recovery bấm Trở lại) và "Lỗi mạng khi tải filelist.ini" của bộ cập nhật
+  (recovery bấm Thử lại) — template nằm trong `common/`.
+- Công cụ mới: `tools/crop_template.py` (cắt template offline từ ảnh full-frame),
+  `tools/run_login.py` (runner nghiệm thu, `--runs N`, `--keep-app`).
+
+## Test (124 test, không cần thiết bị)
 
 - `tests/test_config.py` — load/validate settings, thông báo lỗi thiếu key/sai kiểu.
 - `tests/test_vision.py` (37) — NMS, parse số/phân số OCR, preprocess auto-invert, detect_quality với ảnh tổng hợp, TemplateStore/find/ROI/wait trên screenshot giả.
@@ -110,7 +144,9 @@ Thêm: `TaskError` (gốc lỗi trong-task, FSM đưa về RECOVER) → `StateTi
 - `tests/test_ldplayer.py` (13) — parse `list2` (chuẩn/mở rộng/tên có phẩy/dòng hỏng), resolve_serial (ưu tiên ldconsole, fallback đối chiếu adb, trả None thay vì đoán), start/stop/set_resolution đúng tham số.
 - `tests/test_safety.py` (8) — dry_run bỏ qua + lưu bằng chứng + ưu tiên hơn confirm, confirm duyệt/từ chối, trần phiên raise `SafetyLimitExceeded`, hành động bị chặn không ăn quota, kill-switch chặn guard.
 - `tests/test_recovery.py` (10) — trên TemplateStore/Vision thật với ảnh tổng hợp: màn sạch OK, đóng popup (kể cả popup lì — chạm trần 3 lần), hồi sinh, disconnect ưu tiên hơn popup thường, văng login → RELOGIN, màn lạ lưu ảnh + báo, store thiếu template không nổ lỗi.
-- `tests/test_fsm.py` (17) — happy path + recovery chạy trước mỗi state, transition không khai báo / DONE không khai báo / đồ thị sai → `TaskDefinitionError`, lỗi recoverable retry đúng state, quá quota → ABORT, reset quota sau state thành công, handler tự xin RECOVER, `DeviceLost` → ABORT thẳng kèm ảnh bằng chứng, RELOGIN ở cả 2 đường, kill-switch giữa các state và trong handler → KILLED.
+- `tests/test_fsm.py` (17) — happy path + recovery chạy trước mỗi state, transition không khai báo / DONE không khai báo / đồ thị sai → `TaskDefinitionError`, lỗi recoverable retry đúng state, quá quota → ABORT, reset quota sau state thành công, handler tự xin RECOVER, `DeviceLost` → ABORT thẳng kèm ảnh bằng chứng, RELOGIN ở cả 2 đường, kill-switch giữa các state và trong handler → KILLED, `recovery_resume_state` override, `relogin_is_normal`.
+- `tests/test_login.py` (8) — happy path với creds đã lưu/creds trong config, màn tạo nhân vật → ABORT không bấm gì, sai server → ABORT, thiếu template server → bỏ qua check, Sign In kẹt → ABORT sau quota, slot ngoài phạm vi, bắt buộc có account.
+- `tests/test_device.py` (+4) — `app_in_foreground` parse dumpsys, `input_text` validate charset, `press_delete` gửi batch keyevent.
 
 ## Cách verify
 
@@ -120,14 +156,24 @@ source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pytest && ruff check . && mypy
 ```
 
-## Việc kế tiếp (chi tiết trong PLAN.md)
+## Việc kế tiếp (chi tiết trong PLAN.md — lộ trình đã tách Mac/Win)
 
-1. **GĐ 3b:** chạy `tools/smoke_device.py` trên server Windows có LDPlayer + chụp bộ
-   template đầu tiên theo checklist 6 nhóm trong PLAN.md (cần người thao tác cùng).
-2. **GĐ 4.1:** task nghiệp vụ đầu tiên `tasks/login.py` (R1) — viết được phần khung +
-   test trên Mac, nghiệm thu live cần template từ GĐ 3b.
+1. **Người dùng:** cài game vào AVD `vhtk2-dev` (Play Store hoặc `adb install` APK),
+   login tay 1 acc tới màn chơi.
+2. **GĐ 3b:** chụp bộ template `v1.0-avd/` trên AVD (5 nhóm, nhóm `trade/` dồn sang W1).
+3. **GĐ 4.1:** `tasks/login.py` (R1) — dev + nghiệm thu ngay trên AVD.
+4. Nhóm `W*` (server Windows, đa instance, R4 chuyển vàng/đồ): làm sau khi 5b xong.
 
 ## Ghi chú môi trường
+
+- **AVD dev trên Mac (tạo 2026-10-25):** tên `vhtk2-dev` — Android 13 ARM64 (API 33,
+  có Play Store), 960x540, DPI 160, landscape. Khởi động:
+  `~/Library/Android/sdk/emulator/emulator -avd vhtk2-dev`, serial `emulator-5554`.
+  Smoke test tầng thiết bị PASS trên AVD này: frame đúng 960x540, screenshot
+  ~235–290ms/khung, tap qua InputGate OK. Lưu ý: LDPlayer KHÔNG chạy được trên Mac
+  M1 (không có bản macOS, Windows VM thiếu nested virtualization) — AVD là môi trường
+  dev duy nhất trên Mac; template chụp từ AVD để version `v1.0-avd/`, nghiệm thu
+  cuối vẫn trên LDPlayer Windows x86 thật.
 
 - `.venv` trên máy macOS này đã có: pydantic, structlog, pyyaml, numpy, opencv, adbutils, httpx, pytest, ruff, mypy. **Chưa cài `paddleocr`** (nặng, kén macOS) — OCR lazy init nên không ảnh hưởng test; cài trên máy Windows chạy thật.
 - `ldconsole.exe` chỉ có trên Windows — `LDPlayerManager` và smoke test phải chạy ở đó; toàn bộ logic còn lại test được trên máy này.

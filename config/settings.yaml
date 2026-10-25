@@ -20,7 +20,8 @@ templates:
   # Thư mục gốc chứa ảnh mẫu
   dir: templates
   # Phiên bản template đang dùng — khi game update thì tạo version mới, trỏ lại đây
-  version: v1.0
+  # (v1.0-avd: chụp trên AVD Mac để dev; v1.0: sẽ chụp trên LDPlayer Windows ở W1)
+  version: v1.0-avd
   # Ngưỡng match template (0..1); dưới ngưỡng coi như không tìm thấy
   match_threshold: 0.85
 
@@ -89,6 +90,17 @@ quality:
     lam: { h: [90, 128], s: [70, 255], v: [70, 255] }
     tím: { h: [129, 158], s: [50, 255], v: [70, 255] }
     cam: { h: [8, 28], s: [100, 255], v: [120, 255] }
+
+# Task đăng nhập (R1) — flow: title -> SIGN IN (3CID) -> form -> chọn nhân vật -> vào game
+login:
+  # Chờ màn title (nút Đăng nhập) sau khi mở app — lần đầu load lâu
+  boot_timeout: 120.0
+  # Chờ chuyển màn giữa các bước trong flow login
+  flow_timeout: 40.0
+  # Chờ load vào thế giới (xuất hiện HUD) sau khi bấm Vào game
+  ingame_timeout: 90.0
+  # Số phím Delete gửi để dọn sạch ô nhập trước khi gõ tài khoản/mật khẩu
+  clear_chars: 40
 
 telegram:
   # Bật/tắt thông báo Telegram

@@ -127,6 +127,10 @@ class BaseTask(ABC):
     #: human-readable task name for logs and notifications
     name: str = "base"
 
+    #: Task login đặt True: với nó, màn login trên screen là BÌNH THƯỜNG —
+    #: recovery báo RELOGIN sẽ được coi như OK thay vì kết thúc task.
+    relogin_is_normal: bool = False
+
     def __init__(self, ctx: TaskContext) -> None:
         self.ctx = ctx
         self._log = log.bind(task=self.name)
@@ -157,6 +161,15 @@ class BaseTask(ABC):
     @abstractmethod
     def initial_state(self) -> str:
         """Name of the state the task starts in."""
+
+    def recovery_resume_state(self, failed_state: str) -> str:
+        """Which state to resume at after a recovery pass.
+
+        Default: retry the state that failed. Flow-like tasks whose screens
+        may have moved on during recovery (e.g. login being thrown back to
+        the title) override this to resume at a state that re-routes itself.
+        """
+        return failed_state
 
     # -- runner ----------------------------------------------------------------
 
@@ -198,16 +211,25 @@ class BaseTask(ABC):
                     reason=reason,
                 )
                 outcome = self.ctx.recovery.on_state_failure(failed_state or "?", reason)
-                if outcome is RecoveryOutcome.RELOGIN:
+                if outcome is RecoveryOutcome.RELOGIN and not self.relogin_is_normal:
                     return TaskResult(
                         TaskStatus.RELOGIN_REQUIRED, failed_state or RECOVER, reason, total_recovers
                     )
-                current = failed_state or self.initial_state()
+                resume = (
+                    self.recovery_resume_state(failed_state)
+                    if failed_state is not None
+                    else self.initial_state()
+                )
+                if resume not in self._states:
+                    raise TaskDefinitionError(
+                        f"recovery_resume_state returned unknown state {resume!r}"
+                    )
+                current = resume
                 continue
 
             # recovery chạy TRƯỚC mọi state (quy tắc #3)
             outcome = self.ctx.recovery.check()
-            if outcome is RecoveryOutcome.RELOGIN:
+            if outcome is RecoveryOutcome.RELOGIN and not self.relogin_is_normal:
                 return TaskResult(
                     TaskStatus.RELOGIN_REQUIRED, current, "thrown back to login", total_recovers
                 )

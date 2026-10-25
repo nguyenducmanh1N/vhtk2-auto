@@ -99,6 +99,15 @@ class QualitySettings(_StrictModel):
     colors: dict[str, HSVRange]
 
 
+class LoginSettings(_StrictModel):
+    """Timeouts/knobs of the login task (R1)."""
+
+    boot_timeout: float = Field(gt=0)
+    flow_timeout: float = Field(gt=0)
+    ingame_timeout: float = Field(gt=0)
+    clear_chars: int = Field(gt=0)
+
+
 class TelegramSettings(_StrictModel):
     enabled: bool
     bot_token: str = ""
@@ -126,6 +135,7 @@ class Settings(_StrictModel):
     safety: SafetySettings
     sell: SellSettings
     quality: QualitySettings
+    login: LoginSettings
     telegram: TelegramSettings
     logging: LoggingSettings
     paths: PathSettings
@@ -140,6 +150,8 @@ class AccountLogin(_StrictModel):
     server: str
     username: str
     password: str
+    # Slot nhân vật trên màn "Chọn nhân vật" (1 = trên cùng)
+    character_slot: int = Field(default=1, ge=1)
 
 
 class AccountFarm(_StrictModel):
@@ -155,6 +167,23 @@ class AccountConfig(_StrictModel):
     ldplayer: AccountLDPlayer
     login: AccountLogin
     farm: AccountFarm
+
+
+class LoginCoordinates(_StrictModel):
+    """Fallback coordinates of the login flow (SDK form has no templates)."""
+
+    username_field: tuple[int, int]
+    password_field: tuple[int, int]
+    char_slots: list[tuple[int, int]]
+
+
+class Coordinates(_StrictModel):
+    """Schema of ``config/coordinates.yaml`` — fallback UI coordinates.
+
+    Rule #1 of CLAUDE.md: every use of these must emit a warning log.
+    """
+
+    login: LoginCoordinates
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -200,6 +229,19 @@ def load_account(path: Path) -> AccountConfig:
     data = _read_yaml(path)
     try:
         return AccountConfig.model_validate(data)
+    except ValidationError as exc:
+        raise ConfigError(_format_validation_error(path, exc)) from exc
+
+
+def load_coordinates(path: Path) -> Coordinates:
+    """Load and validate the fallback-coordinates file.
+
+    Raises:
+        ConfigError: same conditions as :func:`load_settings`.
+    """
+    data = _read_yaml(path)
+    try:
+        return Coordinates.model_validate(data)
     except ValidationError as exc:
         raise ConfigError(_format_validation_error(path, exc)) from exc
 

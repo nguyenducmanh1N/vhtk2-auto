@@ -7,113 +7,96 @@ thuần logic → Tiêu chí nghiệm thu (DoD)*. Chỉ chuyển giai đoạn kh
 trước đạt đủ. Sau mỗi giai đoạn xong: cập nhật `PROGRESS.md`, chạy
 `pytest && ruff check . && mypy` phải sạch.
 
+## Nguyên tắc hai môi trường
+
+- **Môi trường dev = Mac + AVD `vhtk2-dev`** (960x540/DPI 160, serial `emulator-5554`,
+  đã smoke test PASS). Chỉ có **1 thiết bị** — mọi giai đoạn dev phải chạy được với
+  1 instance, 1 tài khoản. Template chụp ở đây để version `v1.0-avd/`.
+- **Môi trường production = server Windows x86 + LDPlayer** (4–5 acc farm + 1 acc
+  main nhận vàng/đồ). Mọi thứ cần **từ 2 instance trở lên** (orchestrator đa instance,
+  chuyển vàng/đồ về main) dồn hết vào các giai đoạn `W*`, làm SAU khi phần 1-thiết-bị
+  đã chạy tốt trên Mac. Template production chụp lại trên LDPlayer, version `v1.0/`.
+- Code viết một lần chạy cả hai nơi: khác biệt duy nhất là `templates.version` và
+  danh sách instance trong config — tuyệt đối không if/else theo môi trường trong logic.
+
 ## Lộ trình tổng
 
-| GĐ | Nội dung | Phụ thuộc | Trạng thái |
-| --- | --- | --- | --- |
-| 0 | Bộ khung (config, logging) | — | ✅ Xong |
-| 1 | Tầng thiết bị (device, ldplayer) | 0 | ✅ Xong — nợ smoke test Windows |
-| 2 | Tầng nhận diện (vision, OCR, quality) | 0 | ✅ Xong |
-| 3 | FSM + safety + recovery | 1, 2 | ✅ Xong (110 test pass) |
-| 3b | Smoke test Windows + chụp bộ template đầu | 1 | ⬜ (làm song song GĐ 3) |
-| 4.1 | R1 Login | 3, 3b | ⬜ |
-| 4.2 | R3 Farm (monitor) | 4.1 | ⬜ |
-| 4.3 | R3b Sell (bán đồ) | 4.2 | ⬜ |
-| 4.4 | R5 Equipment (vũ khí + áo sư môn) | 4.3 | ⬜ |
-| 4.5 | R2 Skill verify | 4.1 | ⬜ |
-| 4.6 | R4 Gold transfer (giao dịch 2 instance) | 4.2, GĐ 5 một phần | ⬜ |
-| 5 | Notify Telegram + Orchestrator đa instance | 3 | ⬜ (notify làm sớm, orchestrator sau 4.2) |
-| 6 | Vận hành: dry_run → confirm_mode → chạy thật | tất cả | ⬜ |
+| GĐ | Nội dung | Môi trường | Phụ thuộc | Trạng thái |
+| --- | --- | --- | --- | --- |
+| 0 | Bộ khung (config, logging) | Mac | — | ✅ Xong |
+| 1 | Tầng thiết bị (device, ldplayer) | Mac | 0 | ✅ Xong (smoke PASS trên AVD) |
+| 2 | Tầng nhận diện (vision, OCR, quality) | Mac | 0 | ✅ Xong |
+| 3 | FSM + safety + recovery | Mac | 1, 2 | ✅ Xong (110 test pass) |
+| 3b | Bộ template `v1.0-avd` trên AVD | Mac | game đã cài vào AVD | ⬜ |
+| 4.1 | R1 Login | Mac | 3, 3b | ⬜ |
+| 4.2 | R3 Farm (monitor) | Mac | 4.1 | ⬜ |
+| 4.3 | R3b Sell (bán đồ) | Mac | 4.2 | ⬜ |
+| 4.4 | R5 Equipment (vũ khí + áo sư môn) | Mac | 4.3 | ⬜ |
+| 4.5 | R2 Skill verify | Mac | 4.1 | ⬜ |
+| 5a | Notify Telegram thật | Mac | 3 | ⬜ (làm sớm được, cần cho confirm_mode) |
+| 5b | Runner 1 tài khoản (vòng đời đầy đủ trên 1 thiết bị) | Mac | 4.1–4.5 | ⬜ |
+| W1 | Dựng server Win: LDPlayer, smoke, template `v1.0` | Win | 5b | ⬜ |
+| W2 | Orchestrator đa instance (ldconsole, scheduler, main on-demand) | Win | W1 | ⬜ |
+| W3 | R4 Gold/item transfer — giao dịch 2 nhân vật đứng cạnh nhau | Win | W2 | ⬜ |
+| W4 | Vận hành: dry_run → confirm_mode → chạy thật | Win | W3 | ⬜ |
 
-Thứ tự 4.x theo giá trị/rủi ro: login là cửa ngõ mọi thứ; farm tạo giá trị chính;
-sell/equipment giữ farm chạy liên tục; skill verify đơn giản và không chặn (acc đã cài
-skill tay lần đầu); gold transfer phức tạp nhất (2 thiết bị) nên làm cuối cùng.
+Thứ tự 4.x theo giá trị/rủi ro: login là cửa ngõ; farm tạo giá trị chính; sell/equipment
+giữ farm chạy liên tục; skill verify đơn giản, không chặn (acc đã cài skill tay lần đầu).
+R4 cần 2 thiết bị online cùng lúc (giao dịch mặt-đối-mặt, đã xác nhận trong game) nên
+thuộc nhóm W — nhưng **thiết kế FSM 2 phía viết sẵn từ bây giờ** để W3 chỉ là lắp ráp.
 
 ---
 
-## Giai đoạn 0–2 — ĐÃ XONG (tóm tắt)
+## Giai đoạn 0–3 — ĐÃ XONG (tóm tắt)
 
 - **GĐ 0:** cấu trúc repo, `config.py` (pydantic v2, `extra="forbid"`), `logging_setup.py`
   (structlog JSON lines + console), `settings.yaml` đầy đủ key có comment.
 - **GĐ 1:** `core/errors.py` (cây exception), `core/device.py` (`InputGate` kill-switch +
   rate limit + delay ngẫu nhiên; screenshot raw RGBA; reconnect 3 lần backoff),
   `core/ldplayer.py` (parse `list2`, `resolve_serial` không bao giờ đoán),
-  `tools/smoke_device.py`.
-- **GĐ 2:** `core/vision.py` (`TemplateStore` + manifest, `find/find_all/wait_for/
-  wait_any/wait_vanish`, NMS; `OCR` PaddleOCR lazy, `read_text/read_number/read_fraction`;
-  `detect_quality` theo dải HSV), `tools/capture.py`, `tools/template_check.py`.
-- **Kiểm tra hiện tại:** 75 test pass, ruff sạch, mypy --strict sạch.
-
-**Nợ tồn đọng:** smoke test GĐ 1 trên máy Windows thật (gộp vào GĐ 3b).
-
----
-
-## Giai đoạn 3 — FSM + Safety + Recovery
-
-> Trình thiết kế chi tiết API để duyệt trước khi code (đúng quy trình CLAUDE.md).
-> Dưới đây là khung đã thống nhất ở mức kiến trúc.
-
-**Mục tiêu:** nền tảng cho mọi task — máy trạng thái có kiểm soát, an toàn dữ liệu
-người chơi áp ở một chỗ duy nhất, phục hồi sự cố trước mọi bước.
-
-**Hạng mục:**
-
-1. `core/fsm.py`
-   - `State`: tên, handler, timeout riêng, danh sách state kế tiếp hợp lệ.
-   - `TaskContext`: device, vision, settings, account, logger, safety — bơm vào handler.
-   - `BaseTask.run()`: vòng lặp `kill-switch → recovery.check() → handler → validate
-     transition`. Handler trả state kế tiếp; chuyển sang state không khai báo → lỗi lập trình, ABORT.
-   - State bắt buộc: `RECOVER` (đếm số lần, quá `max_recover_attempts` → ABORT) và
-     `ABORT` (chụp màn cuối, log lý do, báo Telegram).
-   - `TaskResult`: SUCCESS / ABORTED / KILLED kèm state cuối + lý do.
-2. `core/recovery.py` — `Recovery.check(frame)` trả hành động, thứ tự kiểm tra:
-   popup che màn (template `common/`) → văng về login → nhân vật chết → mất kết nối →
-   màn hình lạ (lưu `logs/unknown/` + báo Telegram, trả `UNKNOWN`).
-3. `core/safety.py`
-   - `Safety.guard_irreversible(action, screenshot)`: cổng duy nhất cho bán/mua/giao dịch.
-     `dry_run` BẬT → chụp màn + log, KHÔNG thực hiện, trả `skipped`. `confirm_mode` →
-     gửi ảnh Telegram, chờ xác nhận (timeout → coi như từ chối).
-   - Đếm hành động không hoàn tác mỗi phiên, trần cấu hình được.
-
-**Test thuần logic (fake device/vision/clock):** transition hợp lệ/không hợp lệ, timeout
-state → RECOVER, recovery được gọi trước MỌI state, quá max_recover → ABORT, kill-switch
-giữa chừng → KILLED ở ranh giới state, dry_run chặn đủ 3 loại hành động, confirm_mode
-timeout → từ chối, recovery ưu tiên đúng thứ tự khi nhiều sự cố cùng lúc.
-
-**DoD:** ✅ thiết kế API được duyệt · ✅ một `DemoTask` giả chạy hết vòng đời bằng fake
-device trong test · ✅ pytest/ruff/mypy sạch · ✅ không task nghiệp vụ nào gọi được
-hành động không hoàn tác mà né `guard_irreversible` (kiểm bằng review + grep).
+  `tools/smoke_device.py` — **smoke PASS trên AVD Mac** (frame 960x540, ~235–290ms/khung).
+- **GĐ 2:** `core/vision.py` (`TemplateStore` + manifest, `find/wait_any/wait_vanish`...,
+  NMS; `OCR` PaddleOCR lazy; `detect_quality` theo dải HSV), `tools/capture.py`,
+  `tools/template_check.py`.
+- **GĐ 3:** `core/fsm.py` (`BaseTask`: kill-switch ranh giới state → recovery trước mọi
+  state → handler → validate transition; định tuyến lỗi RECOVER/ABORT/RELOGIN/KILLED),
+  `core/recovery.py`, `core/safety.py` (`guard_irreversible` + dry_run/confirm/trần phiên),
+  `notify.py` (protocol + NullNotifier).
+- **Kiểm tra hiện tại:** 110 test pass, ruff sạch, mypy --strict sạch.
 
 ---
 
-## Giai đoạn 3b — Smoke test Windows + bộ template đầu tiên
+## Giai đoạn 3b — Bộ template `v1.0-avd` trên AVD Mac
 
-**Mục tiêu:** xác nhận tầng thiết bị với phần cứng thật, có nguyên liệu template cho GĐ 4.
+**Mục tiêu:** đủ nguyên liệu template để code và nghiệm thu GĐ 4 ngay trên Mac.
 
-**Hạng mục (làm trên server Windows, cần người thao tác cùng):**
+**Điều kiện vào:** game đã cài trong AVD `vhtk2-dev`, login tay được tới màn chơi.
 
-1. Cài LDPlayer 9, tạo instance chuẩn 960x540/DPI 160, cài game, login tay 1 acc.
-2. `python tools/smoke_device.py` — ghi lại latency screenshot thực tế (mục tiêu < 300ms).
-3. Chụp template bằng `tools/capture.py`, mỗi template match thử ≥ 0.9 ngay khi cắt:
-   - `login/`: logo/nút vào game, màn chọn server, màn chọn nhân vật, HUD in-game.
-   - `common/`: nút X đóng popup, nút Xác nhận, nút Huỷ, biểu tượng mất kết nối,
-     nút hồi sinh, khung hội thoại NPC.
-   - `bag/`: nút mở túi, tiêu đề túi, nút bán, ô trống, icon thuốc, icon phù về thành.
-   - `map/`: nút mở bản đồ, tên map farm mục tiêu, nút auto đánh (bật/tắt — 2 trạng thái).
-   - `shop/`: NPC tạp hoá, NPC bán trang bị, icon vũ khí môn phái, icon áo sư môn, nút Mua.
-   - `trade/`: nút mời giao dịch, khung giao dịch, ô nhập vàng, nút Khoá, nút Đồng ý.
-4. Khai `templates/v1.0/manifest.yaml` (ngưỡng/ROI/grayscale riêng nếu cần).
-5. `python tools/template_check.py` trên màn hình thật: mọi template nhóm liên quan OK.
+**Hạng mục:** chụp bằng `tools/capture.py --serial emulator-5554`, lưu vào
+`templates/v1.0-avd/`, mỗi template match thử ≥ 0.9 ngay khi cắt:
 
-**DoD:** ✅ smoke test pass, frame đúng 960x540 · ✅ đủ template 6 nhóm trên, mỗi cái
-match ≥ ngưỡng trên màn thật · ✅ số vàng/độ bền đọc được bằng OCR trên 3 ảnh chụp mẫu.
+- `login/`: logo/nút vào game, màn chọn server, màn chọn nhân vật, HUD in-game.
+- `common/`: nút X đóng popup, nút Xác nhận, nút Huỷ, biểu tượng mất kết nối,
+  nút hồi sinh, khung hội thoại NPC.
+- `bag/`: nút mở túi, tiêu đề túi, nút bán, ô trống, icon thuốc, icon phù về thành.
+- `map/`: nút mở bản đồ, tên map farm mục tiêu, nút auto đánh (2 trạng thái bật/tắt).
+- `shop/`: NPC tạp hoá, NPC bán trang bị, icon vũ khí môn phái, icon áo sư môn, nút Mua.
+- `trade/`: (chụp trước được thì tốt, không thì dồn sang W1 — cần 2 nhân vật mới mở
+  được khung giao dịch).
+
+Khai `templates/v1.0-avd/manifest.yaml`; đổi `templates.version: v1.0-avd` trong
+`settings.yaml` khi dev trên Mac. Chạy `tools/template_check.py` xác nhận.
+
+**DoD:** ✅ đủ template 5 nhóm đầu, match ≥ ngưỡng trên màn AVD thật · ✅ OCR đọc được
+số vàng + độ bền trên 3 ảnh chụp mẫu từ game thật.
 
 ---
 
-## Giai đoạn 4 — Task nghiệp vụ
+## Giai đoạn 4 — Task nghiệp vụ (toàn bộ dev + nghiệm thu trên AVD, 1 tài khoản)
 
-Khung chung mọi task: kế thừa `BaseTask`; mọi tham số trong YAML; test thuần logic cho
-quyết định (không cần thiết bị); nghiệm thu live luôn chạy với `dry_run: true` trước.
+Khung chung: kế thừa `BaseTask`; tham số trong YAML; test thuần logic không cần thiết
+bị; **nghiệm thu live chạy trên AVD với `dry_run: true`**. Khi sang W1 chỉ nghiệm thu
+lại nhanh trên LDPlayer với template `v1.0` (code không đổi).
 
 ### 4.1 — R1 Login (`tasks/login.py`)
 
@@ -122,21 +105,20 @@ quyết định (không cần thiết bị); nghiệm thu live luôn chạy vớ
 - Config acc (`config/accounts/*.yaml`): server, định danh acc, slot nhân vật.
 - Gặp captcha/màn xác minh → `ABORT` + báo Telegram (tuyệt đối không xử lý).
 - **Test:** transition, chọn đúng slot theo config, nhánh captcha → ABORT.
-- **DoD:** ✅ từ instance vừa mở, login tới HUD in-game 5/5 lần liên tiếp không can thiệp
-  tay · ✅ đang ở màn bất kỳ trong flow login, chạy lại task vẫn về đích (idempotent).
+- **DoD (trên AVD):** ✅ từ emulator vừa mở, login tới HUD in-game 5/5 lần liên tiếp
+  không can thiệp tay · ✅ đang ở màn bất kỳ trong flow, chạy lại task vẫn về đích.
 
 ### 4.2 — R3 Farm (`tasks/farm.py`)
 
 - **States:** `OPEN_MAP → SELECT_SPOT → ARRIVE_VERIFY → ENABLE_AUTO → MONITOR`.
-- `MONITOR` (state chạy lâu duy nhất): mỗi `monitor_interval` giây chụp màn 1 lần, kiểm:
-  auto còn bật, còn trong map farm, túi mấy phần (OCR/đếm ô), vàng hiện tại (OCR),
-  popup hỏng đồ, chết/văng. Sự kiện chỉ TRẢ TÍN HIỆU cho scheduler
-  (`BAG_FULL`, `EQUIP_BROKEN`, `GOLD_THRESHOLD`), không tự xử lý tại chỗ.
+- `MONITOR` (state chạy lâu duy nhất): mỗi `monitor_interval` giây chụp màn 1 lần,
+  kiểm: auto còn bật, còn trong map farm, túi mấy phần, vàng hiện tại (OCR), popup
+  hỏng đồ, chết/văng. Sự kiện chỉ TRẢ TÍN HIỆU (`BAG_FULL`, `EQUIP_BROKEN`,
+  `GOLD_THRESHOLD`) cho runner, không tự xử lý tại chỗ.
 - Config: tên map, toạ độ đứng farm, ngưỡng túi (%), ngưỡng vàng X, interval.
-- **Test:** logic ra tín hiệu theo dữ liệu monitor giả (túi 95% → BAG_FULL...), transition.
-- **DoD:** ✅ farm liên tục ≥ 2 giờ không can thiệp, log monitor đủ chu kỳ · ✅ giết auto
-  giữa chừng (tắt tay trong game) → tool phát hiện và bật lại · ✅ ra đúng tín hiệu khi
-  túi gần đầy thật.
+- **Test:** logic ra tín hiệu theo dữ liệu monitor giả, transition.
+- **DoD (trên AVD):** ✅ farm liên tục ≥ 2 giờ không can thiệp · ✅ tắt auto tay trong
+  game → tool phát hiện và bật lại · ✅ ra đúng tín hiệu khi túi gần đầy thật.
 
 ### 4.3 — R3b Sell (`tasks/sell.py`)
 
@@ -144,95 +126,123 @@ quyết định (không cần thiết bị); nghiệm thu live luôn chạy vớ
   VERIFY_GOLD → RETURN_TO_FARM` (nối lại R3 từ `OPEN_MAP`).
 - Quyết định bán qua **blacklist 2 tầng độc lập** (quy tắc #4 CLAUDE.md): tầng 1 loại
   item (đồ đang mặc, thuốc, phù, quest); tầng 2 ngưỡng phẩm chất từ `detect_quality`.
-  Cả 2 PASS mới được đưa vào `guard_irreversible`.
-- **Test (trọng tâm nhất GĐ 4):** bảng quyết định bán/không bán đủ tổ hợp loại × phẩm chất;
-  2 tầng độc lập (tầng 1 chặn dù tầng 2 cho phép và ngược lại); đếm số item bán ra khớp log.
-- **DoD:** ✅ dry_run: ảnh chụp + log "would sell" đúng 100% so với người soát lại túi
-  trong 3 phiên liền · ✅ confirm_mode hoạt động (ảnh lên Telegram, từ chối → không bán)
-  · ✅ sau bán thật đầu tiên: KHÔNG mất bất kỳ item blacklist nào (soát tay).
+  Cả 2 PASS mới được đưa vào `guard_irreversible`. **Item giá trị cao không bán** sẽ
+  được giữ trong túi — sau này W3 chuyển về main qua giao dịch.
+- **Test (trọng tâm nhất GĐ 4):** bảng quyết định bán/không bán đủ tổ hợp loại × phẩm
+  chất; 2 tầng độc lập; đếm số item bán khớp log.
+- **DoD (trên AVD):** ✅ dry_run: log "would sell" đúng 100% so với người soát túi trong
+  3 phiên liền · ✅ confirm_mode hoạt động (từ chối → không bán) · ✅ lần bán thật đầu
+  (trên acc test không có đồ quý): KHÔNG mất item blacklist nào.
 
 ### 4.4 — R5 Equipment (`tasks/equipment.py`)
 
-- **Phạm vi khoá cứng: CHỈ vũ khí + áo sư môn.** Mọi slot khác không đụng tới.
-- Phát hiện hỏng 2 kênh: popup/icon đỏ trong `MONITOR` (R3) + OCR độ bền khi mở túi (R3b).
-- **States:** `GO_TO_SHOP → FIND_ITEM (template icon + kiểm giá ≤ trần YAML) → BUY
-  (qua guard) → OPEN_BAG → EQUIP → VERIFY_SLOT`.
+- **Phạm vi khoá cứng: CHỈ vũ khí + áo sư môn.** Mọi slot khác không đụng.
+- Phát hiện hỏng 2 kênh: popup/icon đỏ trong MONITOR + OCR độ bền khi mở túi.
+- **States:** `GO_TO_SHOP → FIND_ITEM (template icon + giá ≤ trần YAML) → BUY (qua
+  guard) → OPEN_BAG → EQUIP → VERIFY_SLOT`.
 - Config dùng chung mọi acc (cùng môn phái): NPC shop, 2 template item, trần giá.
-- **Test:** quyết định mua (giá vượt trần → không mua + báo), chỉ 2 slot hợp lệ, transition.
-- **DoD:** ✅ kịch bản thật: tháo vũ khí cho hỏng/để độ bền 0 → tool tự mua đúng item,
-  mặc vào, slot hết đỏ · ✅ giá shop bị đặt cao hơn trần → tool KHÔNG mua, báo Telegram.
+- **Test:** quyết định mua (giá vượt trần → không mua + báo), chỉ 2 slot hợp lệ.
+- **DoD (trên AVD):** ✅ để vũ khí hỏng/độ bền 0 → tool tự mua đúng item, mặc vào, slot
+  hết đỏ · ✅ trần giá thấp hơn giá shop → tool KHÔNG mua, báo Telegram.
 
 ### 4.5 — R2 Skill verify (`tasks/skill_verify.py`)
 
-- **States:** `OPEN_AUTO_SETTINGS → READ_CURRENT → COMPARE (với danh sách YAML của acc)
-  → FIX (nếu lệch) → VERIFY → CLOSE`. Chạy 1 lần sau mỗi login.
+- **States:** `OPEN_AUTO_SETTINGS → READ_CURRENT → COMPARE (danh sách YAML của acc) →
+  FIX → VERIFY → CLOSE`. Chạy 1 lần sau mỗi login.
 - **Test:** so khớp danh sách skill, chỉ sửa ô lệch.
-- **DoD:** ✅ xoá 1 skill khỏi cấu hình auto trong game bằng tay → chạy task → skill được
-  gán lại đúng ô, không đụng ô đang đúng.
+- **DoD (trên AVD):** ✅ xoá 1 skill khỏi auto bằng tay → task gán lại đúng ô, không
+  đụng ô đang đúng.
 
-### 4.6 — R4 Gold transfer (`tasks/gold_transfer.py`) — phức tạp nhất, làm cuối
+---
 
-- **Phương án đã chốt: giao dịch trực tiếp** (game không có gửi vàng qua thư).
+## Giai đoạn 5 — Notify + Runner 1 tài khoản (vẫn trên Mac)
+
+### 5a — Telegram thật trong `notify.py` (làm sớm — confirm_mode cần nó)
+
+- `TelegramNotifier` cài `Notifier` protocol: `send_text`, `send_photo`,
+  `wait_confirm(timeout)` bằng nút inline Yes/No. Lỗi mạng không được làm chết task
+  (queue + retry); confirm timeout = từ chối.
+- **Test:** format message, timeout → từ chối, retry khi lỗi mạng (mock httpx).
+- **DoD:** ✅ nhận tin + ảnh thật trên Telegram · ✅ bấm Yes/No điều khiển được nhánh task.
+
+### 5b — Runner 1 tài khoản (`orchestrator.py`, phần lõi)
+
+Vòng đời đầy đủ của MỘT acc trên MỘT thiết bị — chạy trọn vẹn trên AVD:
+
+```
+LOGIN → SKILL_VERIFY → FARM ⇄ (SELL | EQUIPMENT) → lặp
+```
+
+- Scheduler nhận tín hiệu từ MONITOR, chọn task kế tiếp (ưu tiên EQUIPMENT > SELL khi
+  trùng); `RELOGIN_REQUIRED` từ bất kỳ task nào → quay về LOGIN; đếm lần ABORT liên
+  tiếp, quá ngưỡng → dừng acc + báo Telegram.
+- Tín hiệu `GOLD_THRESHOLD` lúc này **chỉ ghi log + báo Telegram** ("đã tích đủ X
+  vàng, chờ triển khai W3") — KHÔNG kẹt vòng lặp vì thiếu R4.
+- Viết dưới dạng `AccountWorker` độc lập, không biết gì về đa instance — W2 chỉ việc
+  bọc N worker + điều phối, không sửa lõi.
+- Kill-switch `STOP`: dừng ở ranh giới state.
+- **Test:** scheduler chọn đúng task theo tín hiệu (fake task), đếm ABORT, xử lý RELOGIN.
+- **DoD (trên AVD):** ✅ 1 acc chạy 4 giờ không can thiệp: farm → đầy túi tự bán →
+  hỏng đồ tự thay → quay lại farm, log đủ chu kỳ · ✅ file STOP dừng sạch < 2 phút.
+
+---
+
+## Nhóm W — Triển khai Windows đa instance (làm sau, khi phần Mac đã xong)
+
+### W1 — Dựng server + template production
+
+- Server Windows **x86 vật lý** (Intel/AMD, 32GB RAM — KHÔNG phải VM trên Mac M1:
+  thiếu nested virtualization, LDPlayer không chạy được), bật VT trong BIOS.
+- Cài LDPlayer 9, tạo instance chuẩn 960x540/DPI 160; clone đủ 4–5 farm + 1 main.
+- Chạy lại `tools/smoke_device.py`; chụp bộ template `v1.0/` (lặp checklist 3b trên
+  LDPlayer — thêm nhóm `trade/` giờ đã mở được bằng 2 acc); đổi `templates.version`.
+- **DoD:** ✅ smoke PASS trên LDPlayer · ✅ `template_check.py` OK toàn bộ · ✅ chạy lại
+  DoD của 4.1 + 5b trên 1 instance LDPlayer (code không đổi, chỉ đổi config).
+
+### W2 — Orchestrator đa instance
+
+- Bọc N `AccountWorker` (từ 5b) thành thread riêng mỗi instance; `ldconsole launch`
+  → đợi boot → gán serial theo account config.
+- Instance main **on-demand**: hàng đợi yêu cầu chuyển vàng/đồ; gom nhiều acc đạt
+  ngưỡng gần nhau vào 1 lần mở main; `max_concurrent_instances` (mặc định 5) — mở
+  main khi kín slot thì tạm dừng 1 worker farm ở state an toàn.
+- Kill-switch toàn cục; 1 worker crash không ảnh hưởng worker khác.
+- **Test:** scheduler gom hàng đợi main, nhường slot, dừng sạch khi STOP (fake worker).
+- **DoD:** ✅ 2 farm chạy song song 4 giờ, log riêng từng acc · ✅ STOP dừng tất cả
+  < 2 phút · ✅ 1 worker crash → worker khác chạy tiếp, Telegram có cảnh báo.
+
+### W3 — R4 Gold/item transfer (`tasks/gold_transfer.py`)
+
+Giao dịch trực tiếp — **đã xác nhận trong game: 2 nhân vật phải đứng cạnh nhau**.
+
 - Hai FSM phối hợp qua orchestrator:
   - *Farm side:* `GO_RENDEZVOUS → WAIT_PARTNER → INVITE_TRADE → PUT_GOLD (giữ lại
-    `gold_keep` cho phí sinh hoạt) → LOCK → CONFIRM → VERIFY_GOLD_AFTER`.
-  - *Main side:* `LOGIN (tái dùng R1) → GO_RENDEZVOUS → ACCEPT_TRADE → LOCK → CONFIRM →
-    VERIFY_GOLD_AFTER → LOGOUT`.
-- Điểm hẹn: toạ độ cố định trong thành, khai YAML. Đồng bộ qua barrier của orchestrator
-  (hai bên đều báo "đã tới" mới sang bước mời giao dịch; chờ quá timeout → huỷ, về farm,
-  thử lại chu kỳ sau).
-- Xác minh: OCR vàng CẢ 2 BÊN trước/sau; `sent == received` (trong sai số phí nếu có)
-  mới ghi nhận thành công; lệch → ABORT + ảnh + báo Telegram ngay.
-- `PUT_GOLD`/`CONFIRM` đi qua `guard_irreversible` (dry_run dừng trước CONFIRM).
-- **Test:** tính `amount = gold - gold_keep`, so khớp trước/sau có dung sai phí,
-  nhánh timeout chờ bạn giao dịch → huỷ an toàn, barrier 2 bên.
-- **DoD:** ✅ dry_run: 2 instance gặp nhau, mở khung giao dịch, dừng đúng trước xác nhận
-  · ✅ chuyển thật lần đầu với confirm_mode: vàng về main khớp OCR 2 bên · ✅ kịch bản
-  main không tới được điểm hẹn → farm huỷ sạch, quay lại farm, không kẹt.
+    `gold_keep`) [+ PUT_ITEMS nếu bật] → LOCK → CONFIRM → VERIFY_AFTER`.
+  - *Main side:* `LOGIN (tái dùng R1) → GO_RENDEZVOUS → ACCEPT_TRADE → LOCK →
+    CONFIRM → VERIFY_AFTER → LOGOUT`.
+- Điểm hẹn cố định trong thành (toạ độ YAML); barrier 2 bên qua orchestrator — cả hai
+  báo "đã tới" mới mời giao dịch; chờ quá timeout → huỷ sạch, về farm, thử lại sau.
+- **Chuyển đồ (tuỳ chọn, config `transfer_items`):** item giá trị cao mà R3b không bán
+  (phẩm chất ≥ ngưỡng) được đặt vào khung giao dịch cùng đợt với vàng — acc main là
+  nơi "nhận đồ" đúng như yêu cầu.
+- Xác minh: OCR vàng CẢ 2 BÊN trước/sau, `sent == received` (dung sai phí) mới ghi
+  nhận thành công; lệch → ABORT + ảnh + Telegram ngay. `PUT_GOLD`/`CONFIRM` qua
+  `guard_irreversible` (dry_run dừng trước CONFIRM).
+- **Test (viết sẵn từ giai đoạn Mac được):** tính `amount = gold - gold_keep`, so khớp
+  trước/sau có dung sai, nhánh timeout chờ bạn giao dịch → huỷ an toàn, barrier 2 bên.
+- **DoD:** ✅ dry_run: 2 instance gặp nhau, mở khung giao dịch, dừng đúng trước xác
+  nhận · ✅ chuyển thật lần đầu với confirm_mode: vàng về main khớp OCR 2 bên · ✅ main
+  không tới được điểm hẹn → farm huỷ sạch, quay lại farm, không kẹt.
 
----
+### W4 — Vận hành & bàn giao
 
-## Giai đoạn 5 — Notify + Orchestrator
-
-### 5a — `notify.py` (làm ngay sau GĐ 3 — safety/recovery cần nó)
-
-- Telegram Bot API qua `httpx`: `send_text`, `send_photo`, `wait_confirm(timeout)`
-  (nút inline Yes/No cho confirm_mode). Lỗi mạng Telegram không được làm chết task
-  (queue + retry, confirm timeout = từ chối).
-- **Test:** format message, confirm timeout → từ chối, retry khi lỗi mạng (mock httpx).
-- **DoD:** ✅ nhận được tin + ảnh thật trên Telegram · ✅ bấm Yes/No điều khiển được nhánh task.
-
-### 5b — `orchestrator.py`
-
-- Mỗi instance farm = 1 worker thread chạy vòng đời:
-  `ldconsole launch → đợi boot → LOGIN → SKILL_VERIFY → FARM ⇄ (SELL | EQUIPMENT |
-  GOLD_TRANSFER) → lặp`. Scheduler nhận tín hiệu từ MONITOR và quyết định task kế tiếp
-  (ưu tiên: GOLD_TRANSFER > EQUIPMENT > SELL khi trùng).
-- Instance main **on-demand**: hàng đợi yêu cầu chuyển vàng; gom nhiều acc đạt ngưỡng
-  gần nhau vào 1 lần mở main (mở 1 lần, nhận lần lượt từng acc, xong tắt).
-- Giới hạn `max_concurrent_instances` (mặc định 5) — mở main khi đã kín thì tạm dừng
-  1 worker farm ở state an toàn.
-- Kill-switch `STOP`: mọi worker dừng ở ranh giới state, orchestrator thoát sạch, log tổng kết.
-- **Test:** scheduler chọn task theo ưu tiên, gom hàng đợi main, logic nhường slot,
-  dừng sạch khi STOP (toàn bộ bằng fake worker).
-- **DoD:** ✅ 2 instance farm chạy song song 4 giờ, log riêng từng acc, không dẫm nhau
-  · ✅ tạo file STOP → tất cả dừng ở state an toàn < 2 phút · ✅ 1 worker crash → worker
-  khác không ảnh hưởng, Telegram có cảnh báo.
-
----
-
-## Giai đoạn 6 — Vận hành & bàn giao
-
-1. **Tuần đầu — dry_run toàn bộ:** soát log "would sell/buy/trade" mỗi ngày so với thực tế túi đồ.
-2. **5 phiên kế — tắt dry_run, confirm_mode BẬT** (mặc định theo CLAUDE.md): duyệt từng
-   lệnh bán/mua/chuyển qua Telegram.
+1. **Tuần đầu — dry_run toàn bộ:** soát log "would sell/buy/trade" mỗi ngày.
+2. **5 phiên kế — tắt dry_run, confirm_mode BẬT:** duyệt từng lệnh qua Telegram.
 3. **Chạy thật:** tắt confirm với bán đồ trước; chuyển vàng giữ confirm thêm 1 tuần.
-4. **Checklist sau mỗi lần game update:** `tools/template_check.py` → template vỡ thì
-   chụp bộ `v1.x` mới (không sửa đè), đổi version trong `settings.yaml`, chạy lại 1 chu
-   kỳ dry_run trước khi cho chạy thật.
-5. **Theo dõi thường trực:** ảnh trong `logs/unknown/` (màn lạ cần thêm vào recovery),
-   tỉ lệ dùng toạ độ fallback (cao = template xuống cấp), latency screenshot.
+4. **Sau mỗi lần game update:** `template_check.py` → vỡ thì chụp bộ `v1.x` mới
+   (không sửa đè), đổi version, chạy 1 chu kỳ dry_run trước khi chạy thật.
+5. **Theo dõi thường trực:** `logs/unknown/`, tỉ lệ dùng toạ độ fallback, latency.
 
-**DoD toàn dự án:** 4 acc farm + 1 main chạy 24h không can thiệp tay: farm → đầy túi tự
-bán (không mất đồ blacklist) → hỏng vũ khí/áo tự mua mặc lại → đạt ngưỡng vàng tự gom về
-main, mọi sự kiện có log + thông báo Telegram, file STOP dừng được toàn hệ thống.
+**DoD toàn dự án:** 4 acc farm + 1 main chạy 24h không can thiệp tay: farm → đầy túi
+tự bán (không mất đồ blacklist) → hỏng vũ khí/áo tự mua mặc lại → đạt ngưỡng vàng tự
+gom vàng + đồ quý về main, mọi sự kiện có log + Telegram, file STOP dừng toàn hệ thống.

@@ -46,6 +46,7 @@ KEYCODE_WAKEUP = 224
 _SCREENCAP_FORMAT_RGBA = 1
 _MAX_SANE_DIMENSION = 10_000
 _EMULATOR_SERIAL_RE = re.compile(r"emulator-(\d+)")
+_INPUT_TEXT_SAFE_RE = re.compile(r"[A-Za-z0-9@._\-]+")
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +307,31 @@ class Device:
         self._shell(["input", "swipe", str(x), str(y), str(x), str(y), str(duration_ms)])
         log.debug("long_press", serial=self._serial, x=x, y=y, ms=duration_ms)
 
+    def input_text(self, text: str) -> None:
+        """Type text into the currently focused input field (one gated action).
+
+        Only a conservative ASCII charset is accepted — credentials in this
+        project are alphanumeric; anything outside the set would need an IME
+        and could silently corrupt the field.
+
+        Raises:
+            ValueError: if ``text`` contains characters outside ``[A-Za-z0-9@._-]``.
+        """
+        if not _INPUT_TEXT_SAFE_RE.fullmatch(text):
+            raise ValueError("input_text only accepts [A-Za-z0-9@._-]+ (no spaces/unicode)")
+        self._gate.wait_turn("input_text")
+        self._shell(["input", "text", text])
+        # không log nội dung — có thể là mật khẩu
+        log.debug("input_text", serial=self._serial, chars=len(text))
+
+    def press_delete(self, count: int) -> None:
+        """Press DEL ``count`` times in ONE gated shell call (clear a field)."""
+        if count <= 0:
+            return
+        self._gate.wait_turn("press_delete")
+        self._shell(["input", "keyevent", *(["67"] * count)])
+        log.debug("press_delete", serial=self._serial, count=count)
+
     def press_back(self) -> None:
         """Press the BACK key."""
         self._key(KEYCODE_BACK, action="back")
@@ -319,6 +345,18 @@ class Device:
     def app_is_running(self, package: str) -> bool:
         """Whether a process of ``package`` is alive."""
         return self._shell(["pidof", package]).strip() != ""
+
+    def app_in_foreground(self, package: str) -> bool:
+        """Whether ``package`` owns the focused window.
+
+        A game can crash back to the launcher while its process stays alive,
+        so "running" is NOT enough to assume it is on screen.
+        """
+        out = self._shell(["dumpsys", "window"])
+        return any(
+            package in line and ("mCurrentFocus" in line or "mFocusedApp" in line)
+            for line in out.splitlines()
+        )
 
     def start_app(self, package: str) -> None:
         """Launch an app via monkey (no activity name needed)."""

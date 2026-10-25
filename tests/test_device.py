@@ -239,3 +239,55 @@ def test_screenshot_bypasses_gate(tmp_path: Path) -> None:
     )
     device.screenshot()
     assert clk.sleeps == []  # không delay, không tính vào quota
+
+
+class ScriptedAdb(FakeAdb):
+    """FakeAdb whose shell always returns a fixed response."""
+
+    def __init__(self, response: str) -> None:
+        super().__init__()
+        self.response = response
+
+    def shell(self, cmd: list[str], **_kwargs: Any) -> str:
+        self.commands.append(list(cmd))
+        return self.response
+
+
+def test_app_in_foreground_parses_dumpsys(tmp_path: Path) -> None:
+    focused = "  mCurrentFocus=Window{a98 u0 com.blackhole.jx2mobile/org.cocos2dx.cpp.AppActivity}"
+    device = make_device(tmp_path, ScriptedAdb(focused))
+
+    assert device.app_in_foreground("com.blackhole.jx2mobile") is True
+    assert device.app_in_foreground("com.other.app") is False
+
+
+def test_app_in_foreground_false_on_launcher(tmp_path: Path) -> None:
+    launcher = "  mCurrentFocus=Window{b12 u0 com.android.launcher3/.Launcher}"
+    device = make_device(tmp_path, ScriptedAdb(launcher))
+
+    assert device.app_in_foreground("com.blackhole.jx2mobile") is False
+
+
+def test_input_text_sends_command_and_validates_charset(tmp_path: Path) -> None:
+    adb = FakeAdb()
+    device = make_device(tmp_path, adb)
+
+    device.input_text("user@mail.com")
+    assert ["input", "text", "user@mail.com"] in adb.commands
+
+    with pytest.raises(ValueError, match="input_text"):
+        device.input_text("has space")
+    with pytest.raises(ValueError, match="input_text"):
+        device.input_text("tiếngViệt")
+
+
+def test_press_delete_sends_batch_keyevents(tmp_path: Path) -> None:
+    adb = FakeAdb()
+    device = make_device(tmp_path, adb)
+
+    device.press_delete(3)
+    assert ["input", "keyevent", "67", "67", "67"] in adb.commands
+
+    before = len(adb.commands)
+    device.press_delete(0)  # không gửi gì
+    assert len(adb.commands) == before

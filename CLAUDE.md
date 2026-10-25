@@ -58,10 +58,17 @@ Mọi instance LDPlayer PHẢI cấu hình giống hệt nhau, nếu không temp
   giao dịch mới tính là thành công.
 - **Trang bị (R5): CHỈ vũ khí + áo sư môn.** Không mua/thay bất kỳ trang bị nào khác.
 - **Mọi acc farm cùng 1 môn phái** → dùng chung 1 bộ config shop + template trang bị.
-- **Môi trường dev:** máy macOS (không có ldconsole, chưa cài PaddleOCR) — viết code và
-  chạy test thuần logic ở đây; có thể dùng AVD Android Studio 960x540 để thử Device/Vision.
-  Template production PHẢI chụp trên LDPlayer Windows; template chụp từ AVD (nếu có)
-  để version riêng, ví dụ `templates/v1.0-avd/`, không trộn lẫn.
+- **Môi trường dev:** máy macOS với AVD `vhtk2-dev` (960x540/DPI 160, serial
+  `emulator-5554`) — CHỈ CÓ 1 THIẾT BỊ. Toàn bộ phần 1-tài-khoản (login, farm, sell,
+  equipment, skill, runner 5b) phát triển và nghiệm thu tại đây với template
+  `templates/v1.0-avd/`. LDPlayer KHÔNG chạy được trên Mac M1 (kể cả qua Windows VM —
+  thiếu nested virtualization).
+- **Mọi thứ cần ≥ 2 instance** (orchestrator đa instance, R4 chuyển vàng/đồ về main —
+  giao dịch yêu cầu 2 nhân vật đứng cạnh nhau, đã xác nhận trong game) dồn vào nhóm
+  giai đoạn `W*` trong PLAN.md, triển khai sau trên server Windows x86 vật lý với
+  template `templates/v1.0/`. Code không if/else theo môi trường — chỉ khác config.
+- **Acc main nhận cả vàng lẫn đồ quý:** item phẩm chất cao mà sell không bán sẽ được
+  chuyển về main cùng đợt giao dịch vàng (config `transfer_items`, làm ở W3).
 
 ## Tài liệu dự án
 

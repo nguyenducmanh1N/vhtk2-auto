@@ -15,7 +15,7 @@ def test_load_default_settings() -> None:
     settings = load_settings(SETTINGS_PATH)
     assert settings.safety.dry_run is True, "dry_run must default to ON"
     assert settings.ldplayer.resolution.width == 960
-    assert settings.templates.root == Path("templates/v1.0")
+    assert settings.templates.root == settings.templates.dir / settings.templates.version
 
 
 def test_load_example_account() -> None:

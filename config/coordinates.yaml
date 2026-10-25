@@ -1,8 +1,13 @@
-# Toạ độ UI dự phòng — CHỈ dùng khi template matching thất bại,
-# và mỗi lần dùng phải ghi log cảnh báo.
+# Toạ độ UI dự phòng — CHỈ dùng khi không có template cho vị trí đó
+# (ô nhập liệu, slot danh sách...), và mỗi lần dùng phải ghi log cảnh báo.
 # Toạ độ theo độ phân giải chuẩn 960x540.
-#
-# Định dạng: <nhóm>.<tên>: [x, y]
-# Ví dụ (điền dần khi triển khai từng task):
-# common:
-#   btn_close_popup: [910, 40]
+
+login:
+  # Form "SIGN IN WITH 3CID" (dialog cố định giữa màn hình)
+  username_field: [480, 158]
+  password_field: [480, 219]
+  # Màn "Chọn nhân vật": tâm từng slot, trên xuống (slot 1 = trên cùng)
+  char_slots:
+    - [828, 120]
+    - [828, 210]
+    - [828, 300]

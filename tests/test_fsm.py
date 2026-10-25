@@ -361,6 +361,68 @@ def test_relogin_detected_during_deep_recovery(tmp_path: Path) -> None:
     assert result.final_state == "A"
 
 
+def test_recovery_resume_state_override(tmp_path: Path) -> None:
+    """Task ghi đè recovery_resume_state: sau recover quay về state chỉ định."""
+    ctx, _, _ = make_ctx(tmp_path)
+    order: list[str] = []
+    fail_once = {"done": False}
+
+    def do_home() -> str:
+        order.append("HOME")
+        return "WORK"
+
+    def do_work() -> str:
+        order.append("WORK")
+        if not fail_once["done"]:
+            fail_once["done"] = True
+            raise StateTimeout("flaky")
+        return DONE
+
+    state_list = [
+        State("HOME", do_home, 5.0, frozenset({"WORK"})),
+        State("WORK", do_work, 5.0, frozenset({DONE})),
+    ]
+
+    class FlowTask(BaseTask):
+        name = "flow"
+
+        def states(self) -> Sequence[State]:
+            return state_list
+
+        def initial_state(self) -> str:
+            return "HOME"
+
+        def recovery_resume_state(self, failed_state: str) -> str:
+            return "HOME"  # luôn quay về state tự định tuyến
+
+    result = FlowTask(ctx).run()
+
+    assert result.status is TaskStatus.SUCCESS
+    # WORK fail 1 lần -> recover -> resume HOME (không phải retry WORK)
+    assert order == ["HOME", "WORK", "HOME", "WORK"]
+
+
+def test_relogin_is_normal_lets_login_task_continue(tmp_path: Path) -> None:
+    """Task có relogin_is_normal=True (login) không bị RELOGIN đá ra ngoài."""
+    rec = FakeRecovery(check_outcomes=[RecoveryOutcome.RELOGIN])
+    ctx, _, _ = make_ctx(tmp_path, recovery=rec)
+    state_list = [State("A", lambda: DONE, 5.0, frozenset({DONE}))]
+
+    class LoginLikeTask(BaseTask):
+        name = "login-like"
+        relogin_is_normal = True
+
+        def states(self) -> Sequence[State]:
+            return state_list
+
+        def initial_state(self) -> str:
+            return "A"
+
+    result = LoginLikeTask(ctx).run()
+
+    assert result.status is TaskStatus.SUCCESS
+
+
 def test_kill_switch_between_states(tmp_path: Path) -> None:
     ctx, _, _ = make_ctx(tmp_path)
     ran: list[str] = []
