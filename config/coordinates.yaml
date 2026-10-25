@@ -1,0 +1,8 @@
+# Toạ độ UI dự phòng — CHỈ dùng khi template matching thất bại,
+# và mỗi lần dùng phải ghi log cảnh báo.
+# Toạ độ theo độ phân giải chuẩn 960x540.
+#
+# Định dạng: <nhóm>.<tên>: [x, y]
+# Ví dụ (điền dần khi triển khai từng task):
+# common:
+#   btn_close_popup: [910, 40]

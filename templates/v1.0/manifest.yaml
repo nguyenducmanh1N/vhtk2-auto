@@ -1,0 +1,14 @@
+# Metadata riêng cho từng template (không bắt buộc — template không có entry
+# ở đây dùng mặc định toàn cục trong settings.yaml).
+#
+# Key = đường dẫn template không có đuôi .png, ví dụ "common/btn_confirm".
+# Các field cho phép:
+#   threshold: 0.90            # ngưỡng match riêng
+#   roi: [x, y, w, h]          # chỉ tìm trong vùng này (tăng tốc + giảm match nhầm)
+#   grayscale: false           # bắt buộc match màu (khi template chỉ khác nhau về màu)
+#   scales: [0.9, 1.0, 1.1]    # match đa tỉ lệ (hiếm khi cần vì đã chuẩn hoá 960x540)
+#
+# Ví dụ:
+# common/btn_close:
+#   threshold: 0.90
+#   roi: [820, 0, 140, 100]

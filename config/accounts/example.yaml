@@ -1,0 +1,28 @@
+# Mẫu cấu hình một tài khoản. Copy thành main.yaml / farm01.yaml ... và sửa.
+# Các file khác trong thư mục này KHÔNG được commit (đã có trong .gitignore).
+
+# Tên định danh tài khoản (dùng trong log và thông báo)
+name: example
+
+# Vai trò: main (nhận vàng) hoặc farm (cày và chuyển vàng về main)
+role: farm
+
+# Instance LDPlayer gắn với tài khoản này
+ldplayer:
+  # Index instance trong ldconsole (ldconsole list2)
+  index: 0
+  # Serial ADB của instance
+  adb_serial: emulator-5554
+
+# Thông tin đăng nhập (server + tài khoản trong game)
+login:
+  server: ''
+  username: ''
+  password: ''
+
+# Tham số farm cho tài khoản này
+farm:
+  # Tên map cày (đúng như hiển thị trong game, để OCR đối chiếu)
+  map: ''
+  # Ngưỡng vàng: vượt ngưỡng thì kích hoạt chuyển vàng về acc main
+  gold_transfer_threshold: 1000000

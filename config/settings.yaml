@@ -1,0 +1,112 @@
+# =====================================================================
+# Cấu hình chung của VHTK2 Auto Tool
+# Mọi giá trị runtime nằm ở đây — code KHÔNG hardcode.
+# =====================================================================
+
+ldplayer:
+  # Đường dẫn tới ldconsole.exe của LDPlayer 9
+  ldconsole_path: 'C:\LDPlayer\LDPlayer9\ldconsole.exe'
+  # Độ phân giải chuẩn — mọi instance PHẢI giống hệt, nếu không template vỡ
+  resolution:
+    width: 960
+    height: 540
+    dpi: 160
+
+game:
+  # Package name của game trên Android
+  package_name: com.blackhole.jx2mobile
+
+templates:
+  # Thư mục gốc chứa ảnh mẫu
+  dir: templates
+  # Phiên bản template đang dùng — khi game update thì tạo version mới, trỏ lại đây
+  version: v1.0
+  # Ngưỡng match template (0..1); dưới ngưỡng coi như không tìm thấy
+  match_threshold: 0.85
+
+vision:
+  # Timeout mặc định (giây) khi chờ một template xuất hiện
+  default_timeout: 10.0
+  # Khoảng nghỉ (giây) giữa 2 lần chụp màn khi đang chờ template
+  poll_interval: 0.5
+  # Match trên ảnh xám (nhanh hơn ~3 lần). Template nào PHẢI phân biệt bằng màu
+  # (vd icon giống nhau khác màu) thì đặt grayscale: false riêng cho template đó
+  # trong templates/<version>/manifest.yaml
+  grayscale_match: true
+  # Ngưỡng IoU cho non-maximum suppression trong find_all: 2 match chồng nhau
+  # quá tỉ lệ này thì chỉ giữ match điểm cao hơn
+  nms_overlap_threshold: 0.3
+
+ocr:
+  # Ngôn ngữ PaddleOCR (đọc số vàng, tên map, độ bền)
+  lang: vi
+
+safety:
+  # Chế độ khô: BẬT mặc định — không thực hiện hành động không thể hoàn tác
+  # (bán, mua, giao dịch), thay vào đó chụp màn + ghi log
+  dry_run: true
+  # Với bán đồ / chuyển vàng: gửi ảnh lên Telegram, chờ người xác nhận
+  # (bật mặc định trong 5 phiên chạy đầu)
+  confirm_mode: true
+  # Chờ người xác nhận tối đa bao lâu (giây); hết giờ coi như TỪ CHỐI
+  confirm_timeout_seconds: 300.0
+  # Tên file kill-switch ở thư mục gốc; file xuất hiện → dừng sạch mọi task
+  kill_switch_file: STOP
+  # Giới hạn tốc độ: tối đa N hành động (tap/swipe/key) mỗi phút
+  max_actions_per_minute: 30
+  # Trần số hành động không hoàn tác (bán/mua/giao dịch) THỰC THI mỗi phiên chạy;
+  # vượt trần gần như chắc chắn là bug lặp → task ABORT ngay
+  max_irreversible_per_session: 200
+  # Số lần RECOVER liên tiếp tối đa cho một state trước khi ABORT
+  max_recover_attempts: 3
+  # Delay ngẫu nhiên (giây) giữa các thao tác, tránh spam server
+  action_delay:
+    min_seconds: 0.5
+    max_seconds: 2.0
+
+sell:
+  # Ngưỡng phẩm chất: item có phẩm chất >= ngưỡng này KHÔNG bao giờ bán
+  # (0=trắng, 1=lục, 2=lam, 3=tím, 4=cam)
+  quality_blacklist_threshold: 2
+  # Danh sách tên item không bao giờ bán (khớp theo OCR tên item)
+  item_blacklist:
+    - "Phù về thành"
+    - "Thuốc hồi sinh lực"
+    - "Thuốc hồi nội lực"
+
+# Nhận diện phẩm chất item qua màu VIỀN ô item (không dùng template matching).
+# Dải màu theo chuẩn HSV của OpenCV: H 0..179, S/V 0..255.
+# Các giá trị dưới đây là điểm khởi đầu — cần hiệu chỉnh theo ảnh chụp thực tế
+# (dùng tools/capture.py cắt ô item rồi soi giá trị HSV).
+quality:
+  # Bề dày viền (pixel) lấy mẫu quanh mép ô item
+  border_width: 3
+  # Tỉ lệ pixel viền tối thiểu rơi vào một dải màu để kết luận phẩm chất
+  min_match_fraction: 0.10
+  colors:
+    trắng: { h: [0, 179], s: [0, 60], v: [160, 255] }
+    lục: { h: [40, 85], s: [70, 255], v: [70, 255] }
+    lam: { h: [90, 128], s: [70, 255], v: [70, 255] }
+    tím: { h: [129, 158], s: [50, 255], v: [70, 255] }
+    cam: { h: [8, 28], s: [100, 255], v: [120, 255] }
+
+telegram:
+  # Bật/tắt thông báo Telegram
+  enabled: false
+  # Token bot — KHÔNG commit giá trị thật; để trống thì đọc từ biến môi trường
+  # VHTK_TELEGRAM_BOT_TOKEN
+  bot_token: ''
+  # Chat ID nhận thông báo
+  chat_id: ''
+
+logging:
+  # Thư mục ghi log JSON lines + ảnh màn hình lạ (logs/unknown/)
+  dir: logs
+  # Mức log: DEBUG / INFO / WARNING / ERROR
+  level: INFO
+
+paths:
+  # Thư mục chứa cấu hình từng tài khoản
+  accounts_dir: config/accounts
+  # File toạ độ UI dự phòng khi template thất bại (mỗi lần dùng phải log cảnh báo)
+  coordinates_file: config/coordinates.yaml
