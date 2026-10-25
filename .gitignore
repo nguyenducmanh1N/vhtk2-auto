@@ -34,3 +34,6 @@ config/accounts/*.yaml
 
 # Kill-switch file
 STOP
+
+# Thư mục tạm của Playwright khi test UI
+.playwright-mcp/

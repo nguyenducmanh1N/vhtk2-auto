@@ -16,9 +16,14 @@ dependencies = [
     "pydantic>=2.7",
     "structlog>=24.1",
     "httpx>=0.27",
+    "fastapi>=0.111",
+    "uvicorn>=0.30",
+    "ruamel.yaml>=0.18",
 ]
 
 [project.optional-dependencies]
+# Cửa sổ desktop cho app quản lý; thiếu thì UI tự mở bằng trình duyệt
+desktop = ["pywebview>=5.1"]
 dev = [
     "pytest>=8.0",
     "ruff>=0.5",
@@ -53,7 +58,7 @@ packages = ["vhtk"]
 strict = true
 # Các thư viện chưa có type stub đầy đủ
 [[tool.mypy.overrides]]
-module = ["adbutils.*", "cv2.*", "paddleocr.*"]
+module = ["adbutils.*", "cv2.*", "paddleocr.*", "ruamel.*", "webview.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

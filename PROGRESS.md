@@ -13,6 +13,7 @@ Cập nhật lần cuối: 2026-10-25. Kế hoạch chi tiết từng giai đo�
 | 3b | Template `v1.0-avd`: login 16 cái + common 4 cái (disconnected/btn_reconnect/patch_net_error/btn_retry); bag/map/shop chụp khi làm task tương ứng | 🔶 Đủ cho R1 |
 | 4.1 | R1 Login — **✅ NGHIỆM THU ĐẠT trên AVD**: 5/5 lần login liên tiếp (24–29s/lần), idempotent (chạy khi đang in-game → DONE sau 1,6s) | ✅ Xong |
 | 4.2–4.5 | farm, sell, equipment, skill_verify | ⬜ Chưa làm (stub) |
+| D1 | App desktop — quản lý tài khoản & an toàn (`python -m vhtk.ui`): CRUD acc trên YAML giữ comment, tab An toàn có dải trạng thái bảo vệ; FastAPI + web UI, pywebview tuỳ chọn | ✅ Xong, đã verify bằng trình duyệt |
 | 5 | Orchestrator đa instance + notify Telegram | ⬜ Notify: đã có protocol + NullNotifier; Telegram thật và orchestrator chưa làm |
 
 Kiểm tra hiện tại: **124 test pass**, `ruff check` sạch, `mypy --strict` sạch (20 file).
