@@ -35,10 +35,13 @@ trước đạt đủ. Sau mỗi giai đoạn xong: cập nhật `PROGRESS.md`, 
 | 4.5 | R2 Skill verify | Mac | 4.1 | ⬜ |
 | 5a | Notify Telegram thật | Mac | 3 | ⬜ (làm sớm được, cần cho confirm_mode) |
 | 5b | Runner 1 tài khoản (vòng đời đầy đủ trên 1 thiết bị) | Mac | 4.1–4.5 | ⬜ |
+| D1 | App desktop — quản lý tài khoản & cấu hình (CRUD trên YAML) | Mac | 3 | ⬜ |
 | W1 | Dựng server Win: LDPlayer, smoke, template `v1.0` | Win | 5b | ⬜ |
-| W2 | Orchestrator đa instance (ldconsole, scheduler, main on-demand) | Win | W1 | ⬜ |
+| W2 | Orchestrator đa instance (ldconsole, scheduler, main on-demand) + API điều khiển | Win | W1 | ⬜ |
+| D2 | App desktop — quản lý thiết bị: gán acc ↔ instance, mở máy tự login | Win | W2, D1 | ⬜ |
+| D3 | App desktop — dashboard giám sát: trạng thái worker, log, ảnh màn, kill-switch, duyệt confirm | Win | D2 | ⬜ |
 | W3 | R4 Gold/item transfer — giao dịch 2 nhân vật đứng cạnh nhau | Win | W2 | ⬜ |
-| W4 | Vận hành: dry_run → confirm_mode → chạy thật | Win | W3 | ⬜ |
+| W4 | Vận hành: dry_run → confirm_mode → chạy thật | Win | W3, D3 | ⬜ |
 
 Thứ tự 4.x theo giá trị/rủi ro: login là cửa ngõ; farm tạo giá trị chính; sell/equipment
 giữ farm chạy liên tục; skill verify đơn giản, không chặn (acc đã cài skill tay lần đầu).
@@ -112,10 +115,17 @@ lại nhanh trên LDPlayer với template `v1.0` (code không đổi).
 
 - **States:** `OPEN_MAP → SELECT_SPOT → ARRIVE_VERIFY → ENABLE_AUTO → MONITOR`.
 - `MONITOR` (state chạy lâu duy nhất): mỗi `monitor_interval` giây chụp màn 1 lần,
-  kiểm: auto còn bật, còn trong map farm, túi mấy phần, vàng hiện tại (OCR), popup
-  hỏng đồ, chết/văng. Sự kiện chỉ TRẢ TÍN HIỆU (`BAG_FULL`, `EQUIP_BROKEN`,
-  `GOLD_THRESHOLD`) cho runner, không tự xử lý tại chỗ.
-- Config: tên map, toạ độ đứng farm, ngưỡng túi (%), ngưỡng vàng X, interval.
+  kiểm: auto còn bật, còn trong map farm, túi mấy phần, vàng hiện tại (OCR), **mức
+  máu/mana** (đọc thanh HP), popup hỏng đồ, chết/văng. Sự kiện chỉ TRẢ TÍN HIỆU
+  (`BAG_FULL`, `EQUIP_BROKEN`, `GOLD_THRESHOLD`, `HP_LOW`) cho runner, không tự xử lý.
+- **Mức máu quay về** (`hp_retreat_percent`): HP dưới ngưỡng liên tiếp N chu kỳ dù
+  auto có sẵn tự uống thuốc → tín hiệu `HP_LOW` → runner cho về thành nghỉ/mua thuốc
+  rồi quay lại farm (an toàn hơn là đứng chết đi chết lại).
+- **Cài đặt nhặt đồ**: dùng cấu hình auto-nhặt CÓ SẴN của game (bật trong bảng auto,
+  cùng chỗ cài skill R2) — task chỉ xác minh nó đang bật đúng theo YAML, không tự
+  cài lại logic nhặt.
+- Config mỗi acc: tên map, toạ độ đứng farm, ngưỡng túi (%), ngưỡng vàng X,
+  `hp_retreat_percent`, interval — tất cả sẽ sửa được qua app desktop (D1).
 - **Test:** logic ra tín hiệu theo dữ liệu monitor giả, transition.
 - **DoD (trên AVD):** ✅ farm liên tục ≥ 2 giờ không can thiệp · ✅ tắt auto tay trong
   game → tool phát hiện và bật lại · ✅ ra đúng tín hiệu khi túi gần đầy thật.
@@ -187,6 +197,69 @@ LOGIN → SKILL_VERIFY → FARM ⇄ (SELL | EQUIPMENT) → lặp
 
 ---
 
+## Nhóm D — App desktop quản lý (bổ sung 2026-10-25)
+
+**Mục tiêu:** người vận hành quản lý mọi thứ qua giao diện, không phải sửa YAML tay:
+cấu hình từng tài khoản, gán tài khoản ↔ thiết bị, mở thiết bị là tự login, theo dõi
+và điều khiển toàn bộ hệ thống đang chạy.
+
+**Nguyên tắc kiến trúc (bắt buộc):**
+- GUI là **lớp vỏ mỏng**. Nguồn sự thật về cấu hình vẫn là YAML (pydantic validate);
+  GUI đọc/ghi qua đúng các hàm `load_*` hiện có và một module `config_writer` mới.
+  Sửa tay YAML vẫn hoạt động như cũ — GUI hỏng không làm tool tê liệt.
+- GUI nói chuyện với orchestrator qua **API điều khiển cục bộ** (thêm ở W2): lấy
+  trạng thái worker, start/stop instance, bật/tắt dry_run/confirm, kill-switch,
+  nhận ảnh màn hình + sự kiện. KHÔNG gọi thẳng vào Device/Vision từ UI.
+- Không logic nghiệp vụ trong UI — mọi quyết định (bán gì, khi nào về thành) vẫn
+  nằm trong tasks/orchestrator.
+
+**Stack (đã chốt 2026-10-25):** FastAPI làm API cục bộ + giao diện web (HTML/JS
+gọn, không framework nặng), gói thành cửa sổ desktop bằng `pywebview`. Lý do:
+cùng process Python với orchestrator; cùng một UI vừa là app desktop trên server
+vừa mở được từ máy khác qua trình duyệt (bind localhost mặc định, muốn xem từ xa
+thì tự mở bind + đặt token trong settings). Giao diện đặt tại `src/vhtk/ui/`.
+
+### D1 — Quản lý tài khoản & cấu hình (chạy được ngay trên Mac, chỉ cần GĐ 3)
+
+- Danh sách tài khoản (đọc `config/accounts/*.yaml`): thêm/sửa/xoá/nhân bản.
+- Form theo đúng schema pydantic, validate ngay khi nhập:
+  - *Đăng nhập:* server, username/password 3CID (để trống = dùng acc SDK đã lưu),
+    slot nhân vật, vai trò main/farm.
+  - *Farm:* map, toạ độ đứng, ngưỡng túi, ngưỡng vàng chuyển về main,
+    `hp_retreat_percent`, danh sách skill (R2).
+  - *Thiết bị:* index LDPlayer, ADB serial.
+- Sửa `settings.yaml` phần an toàn (dry_run, confirm_mode, ngưỡng, delay) có cảnh
+  báo rõ khi tắt các lớp bảo vệ.
+- Mật khẩu trong YAML: giữ nguyên plaintext file local (đã gitignore) + cảnh báo
+  trong UI; không phát minh mã hoá nửa vời.
+- **Test:** round-trip đọc→sửa→ghi→đọc giữ nguyên dữ liệu + comment không mất
+  (dùng `ruamel.yaml` để giữ comment); validate chặn giá trị sai.
+- **DoD:** ✅ tạo acc mới hoàn chỉnh chỉ bằng UI, file YAML sinh ra pass
+  `load_account` · ✅ sửa ngưỡng vàng qua UI → task đọc được giá trị mới ở lần chạy kế.
+
+### D2 — Quản lý thiết bị (cần W2 vì phụ thuộc ldconsole + orchestrator API)
+
+- Bảng instance LDPlayer (từ `ldconsole list2`): trạng thái chạy/tắt, acc đang gán,
+  task đang chạy, state hiện tại.
+- Gán tài khoản ↔ instance (ghi vào account YAML); kiểm tra trùng gán.
+- Nút **"Mở & đăng nhập"**: start instance → đợi boot → chạy LoginTask của acc đã
+  gán → báo kết quả — đúng yêu cầu "mở thiết bị thì tự đăng nhập tài khoản".
+- Nút dừng sạch từng worker (dừng ở ranh giới state, không giết giữa hành động).
+- **DoD:** ✅ từ UI mở 2 instance, cả 2 tự login đúng acc được gán · ✅ dừng 1 worker
+  không ảnh hưởng worker kia.
+
+### D3 — Dashboard giám sát & điều khiển
+
+- Mỗi worker một thẻ: acc, instance, task/state hiện tại, vàng hiện có, độ đầy túi,
+  HP, ảnh màn hình mới nhất (cập nhật theo chu kỳ monitor), số recover/abort.
+- Dòng sự kiện (từ log JSON lines): bán đồ, mua đồ, chuyển vàng, recover, cảnh báo.
+- Điều khiển: kill-switch toàn cục (tạo file STOP), bật/tắt dry_run & confirm_mode,
+  và **hàng đợi duyệt confirm ngay trong app** (bấm Yes/No thay vì chỉ qua Telegram —
+  cùng cơ chế `Notifier`, Telegram vẫn là kênh khi vắng mặt).
+- **DoD:** ✅ nhìn dashboard biết được từng acc đang làm gì không cần mở emulator
+  · ✅ bấm kill-switch từ UI → mọi worker dừng sạch < 2 phút · ✅ duyệt một lệnh bán
+  qua UI hoạt động như duyệt qua Telegram.
+
 ## Nhóm W — Triển khai Windows đa instance (làm sau, khi phần Mac đã xong)
 
 ### W1 — Dựng server + template production
@@ -207,6 +280,9 @@ LOGIN → SKILL_VERIFY → FARM ⇄ (SELL | EQUIPMENT) → lặp
   ngưỡng gần nhau vào 1 lần mở main; `max_concurrent_instances` (mặc định 5) — mở
   main khi kín slot thì tạm dừng 1 worker farm ở state an toàn.
 - Kill-switch toàn cục; 1 worker crash không ảnh hưởng worker khác.
+- **API điều khiển cục bộ** (nền cho app desktop D2/D3): trạng thái từng worker
+  (task/state/vàng/túi/HP/ảnh mới nhất), start/stop instance, bật tắt dry_run &
+  confirm, hàng đợi confirm. Chỉ bind localhost; UI là client duy nhất.
 - **Test:** scheduler gom hàng đợi main, nhường slot, dừng sạch khi STOP (fake worker).
 - **DoD:** ✅ 2 farm chạy song song 4 giờ, log riêng từng acc · ✅ STOP dừng tất cả
   < 2 phút · ✅ 1 worker crash → worker khác chạy tiếp, Telegram có cảnh báo.

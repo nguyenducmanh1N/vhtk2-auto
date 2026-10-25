@@ -34,6 +34,7 @@ thay vì tự cài đặt lại từ đầu.
 | Validate config          | `pydantic` v2                       |                                         |
 | Logging                  | `structlog` → JSON lines           |                                         |
 | Thông báo              | Telegram Bot API (`httpx`)          |                                         |
+| App desktop quản lý   | FastAPI + web UI + `pywebview`      | lớp vỏ mỏng trên YAML + API orchestrator; nhóm D trong PLAN.md |
 | Test                     | `pytest`                            |                                         |
 
 ## Môi trường chuẩn hoá
@@ -69,6 +70,10 @@ Mọi instance LDPlayer PHẢI cấu hình giống hệt nhau, nếu không temp
   template `templates/v1.0/`. Code không if/else theo môi trường — chỉ khác config.
 - **Acc main nhận cả vàng lẫn đồ quý:** item phẩm chất cao mà sell không bán sẽ được
   chuyển về main cùng đợt giao dịch vàng (config `transfer_items`, làm ở W3).
+- **App desktop quản lý (nhóm D):** FastAPI + web UI gói bằng `pywebview`. GUI là lớp
+  vỏ mỏng: cấu hình vẫn là YAML (GUI đọc/ghi qua schema pydantic, giữ comment bằng
+  `ruamel.yaml`), điều khiển runtime qua API cục bộ của orchestrator — KHÔNG có logic
+  nghiệp vụ trong UI, không gọi thẳng Device/Vision từ UI.
 
 ## Tài liệu dự án
 
