@@ -27,7 +27,7 @@ import structlog
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from vhtk.config import ConfigError, QualitySettings, VisionSettings
+from vhtk.config import ConfigError, HSVRange, QualitySettings, VisionSettings
 
 log = structlog.get_logger(__name__)
 
@@ -88,6 +88,9 @@ class _TemplateMeta(BaseModel):
     roi: Rect | None = None
     grayscale: bool | None = None
     scales: tuple[float, ...] | None = None
+    # Tên hiển thị cho GUI (vd tên map in-game của template map/row_*);
+    # không ảnh hưởng gì tới matching
+    display_name: str | None = None
 
 
 class TemplateStore:
@@ -539,6 +542,51 @@ class OCR:
     def read_fraction(self, roi: Image) -> tuple[int, int] | None:
         """Read ``current/total`` (e.g. bag slots ``56/60``); ``None`` if unreadable."""
         return parse_fraction(self.read_text(roi))
+
+
+# ---------------------------------------------------------------------------
+# Status bars by color (HP/mana on the HUD)
+# ---------------------------------------------------------------------------
+
+
+def bar_fill_percent(
+    frame: Image,
+    rect: Rect,
+    color: HSVRange,
+    min_column_fraction: float = 0.5,
+) -> float:
+    """Fill level (0..100) of a horizontal status bar, measured by color.
+
+    Crops ``rect`` (x, y, w, h) from a BGR ``frame``, masks the pixels inside
+    the HSV ``color`` range (hue wrap-around supported, e.g. red ``h: [172, 8]``),
+    and counts the columns where at least ``min_column_fraction`` of the pixels
+    match — the bar drains horizontally, so the filled fraction of columns IS
+    the fill percent. No OCR involved.
+
+    Raises:
+        VisionError: if ``rect`` lies outside the frame.
+    """
+    x, y, w, h = rect
+    fh, fw = frame.shape[:2]
+    if x < 0 or y < 0 or w <= 0 or h <= 0 or x + w > fw or y + h > fh:
+        raise VisionError(f"bar rect {rect} lies outside frame {fw}x{fh}")
+    crop = frame[y : y + h, x : x + w]
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    hue = hsv[:, :, 0].astype(int)
+    sat = hsv[:, :, 1].astype(int)
+    val = hsv[:, :, 2].astype(int)
+    h_lo, h_hi = color.h
+    # hue là vòng tròn 0..179 — dải "quấn vòng" (h_lo > h_hi) hợp lệ
+    h_ok = (hue >= h_lo) & (hue <= h_hi) if h_lo <= h_hi else (hue >= h_lo) | (hue <= h_hi)
+    mask = (
+        h_ok
+        & (sat >= color.s[0])
+        & (sat <= color.s[1])
+        & (val >= color.v[0])
+        & (val <= color.v[1])
+    )
+    filled_columns = np.count_nonzero(mask.sum(axis=0) >= h * min_column_fraction)
+    return 100.0 * filled_columns / w
 
 
 # ---------------------------------------------------------------------------

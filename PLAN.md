@@ -283,9 +283,22 @@ thì tự mở bind + đặt token trong settings). Giao diện đặt tại `sr
 - **API điều khiển cục bộ** (nền cho app desktop D2/D3): trạng thái từng worker
   (task/state/vàng/túi/HP/ảnh mới nhất), start/stop instance, bật tắt dry_run &
   confirm, hàng đợi confirm. Chỉ bind localhost; UI là client duy nhất.
+- **Vòng đời theo-từng-tài-khoản từ GUI (yêu cầu chốt 2026-10-26):**
+  - "Thêm tài khoản" trên GUI → `POST /api/workers/{stem}/provision`: `ldconsole copy`
+    nhân bản từ **instance mẫu** (đã cài game, 960x540/DPI 160) → gán index/cổng ADB
+    mới ghi ngược vào YAML acc → launch → chờ ADB → spawn worker riêng (login bằng
+    user/pass trong YAML → farm độc lập).
+  - **Sổ đăng ký worker** `{stem → PID}` (file + psutil, chạy cả Mac/Win) thay cho
+    pgrep toàn cục hiện tại; sửa thông tin acc → restart ĐÚNG worker đó
+    (`POST /api/workers/{stem}/restart`), các instance khác không gián đoạn.
+  - Kill-switch tách tầng: `STOP` toàn cục + `STOP.{stem}` theo từng acc.
+  - Quản lý tiến trình chuyển vào Python (psutil) để GUI dùng chung một đường
+    trên Mac lẫn Win; script `./vhtk` bash chỉ còn là lớp vỏ dev trên Mac.
 - **Test:** scheduler gom hàng đợi main, nhường slot, dừng sạch khi STOP (fake worker).
 - **DoD:** ✅ 2 farm chạy song song 4 giờ, log riêng từng acc · ✅ STOP dừng tất cả
-  < 2 phút · ✅ 1 worker crash → worker khác chạy tiếp, Telegram có cảnh báo.
+  < 2 phút · ✅ 1 worker crash → worker khác chạy tiếp, Telegram có cảnh báo ·
+  ✅ thêm acc trên GUI → instance mới tự mở, tự login, tự farm; sửa acc → chỉ
+  instance đó restart.
 
 ### W3 — R4 Gold/item transfer (`tasks/gold_transfer.py`)
 

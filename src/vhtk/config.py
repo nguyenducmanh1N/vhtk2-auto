@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 DEFAULT_SETTINGS_PATH = Path("config/settings.yaml")
 
@@ -78,11 +78,6 @@ class SafetySettings(_StrictModel):
     action_delay: ActionDelay
 
 
-class SellSettings(_StrictModel):
-    quality_blacklist_threshold: int = Field(ge=0)
-    item_blacklist: list[str]
-
-
 class HSVRange(_StrictModel):
     """One HSV color range, OpenCV convention: H in 0..179, S/V in 0..255."""
 
@@ -91,12 +86,147 @@ class HSVRange(_StrictModel):
     v: tuple[int, int]
 
 
+class SellSettings(_StrictModel):
+    """Knobs of the sell task (R3b) — the most safety-critical task.
+
+    Discovered on the AVD (2026-10-26): in the NPC shop's sell mode a tap
+    sells INSTANTLY, the game asks nothing — every protection lives here.
+    """
+
+    quality_blacklist_threshold: int = Field(ge=0)
+    # Danh sách tên item cấm bán — dùng khi có OCR (Windows); trên Mac lớp
+    # bảo vệ chính là WHITELIST icon bên dưới
+    item_blacklist: list[str]
+    # Bán 1 lần sau mỗi N chu kỳ rút-về-thành (đằng nào cũng đang ở thành)
+    every_n_retreats: int = Field(gt=0)
+    # WHITELIST: chỉ bán ô khớp một template icon ``sell/ok_*`` — đồ lạ,
+    # đồ mới, đồ chưa có template thì KHÔNG BAO GIỜ bán
+    icon_match_threshold: float = Field(ge=0.0, le=1.0)
+    # Màu nền ô "bán được" game tô trong chế độ Bán + tỉ lệ pixel tối thiểu
+    highlight: HSVRange
+    highlight_min_fraction: float = Field(ge=0.0, le=1.0)
+    # Số trang túi quét mỗi lần bán (1 = chỉ trang đầu)
+    max_pages: int = Field(ge=1)
+    # Chờ các bước mở shop/chuyển chế độ (giây)
+    shop_timeout: float = Field(gt=0)
+    # Trần thời gian game tự tìm đường tới NPC trong thành (giây)
+    npc_route_timeout: float = Field(gt=0)
+
+
 class QualitySettings(_StrictModel):
     """Item-quality detection via border color of an item cell."""
 
     border_width: int = Field(gt=0)
     min_match_fraction: float = Field(ge=0.0, le=1.0)
     colors: dict[str, HSVRange]
+
+
+class FarmSkillSettings(_StrictModel):
+    """Auto skill-casting inside the farm MONITOR loop.
+
+    Phương án A (đã chốt 2026-10-27): xoay vòng đơn giản — nhấn lần lượt các
+    ô trong ``slots``; chiêu đang hồi thì cú tap vô hại, game tự bỏ qua.
+    Ô ``heal_slot`` tách riêng: CHỈ nhấn khi HP dưới ``heal_hp_percent``.
+    Toạ độ tâm 8 ô nằm trong coordinates.yaml (``farm.skill_slots``).
+    """
+
+    enabled: bool = False
+    # Các ô chiêu nhấn xoay vòng, số 1-8 theo vị trí trên vòng chiêu
+    slots: list[int] = []
+    # Giãn cách tối thiểu giữa 2 lần nhấn chiêu (giây). Sàn THỰC TẾ do
+    # safety.action_delay + max_actions_per_minute quyết định — đặt nhỏ hơn
+    # cũng không nhanh hơn được
+    cast_interval: float = Field(gt=0, default=1.0)
+    # Ô vật phẩm hồi máu (1-8); 0 = không dùng
+    heal_slot: int = Field(ge=0, le=8, default=0)
+    # Dùng vật phẩm hồi máu khi HP dưới ngưỡng này (%)
+    heal_hp_percent: int = Field(ge=1, le=99, default=60)
+    # Giãn cách tối thiểu giữa 2 lần dùng vật phẩm hồi máu (giây) — thuốc
+    # có thời gian hồi riêng, spam tap chỉ đốt quota hành động
+    heal_cooldown: float = Field(ge=0, default=5.0)
+
+    @model_validator(mode="after")
+    def _slots_valid(self) -> FarmSkillSettings:
+        for s in self.slots:
+            if not 1 <= s <= 8:
+                raise ValueError(f"skill slot must be 1..8, got {s}")
+        if len(set(self.slots)) != len(self.slots):
+            raise ValueError(f"duplicate skill slots: {self.slots}")
+        if self.heal_slot and self.heal_slot in self.slots:
+            raise ValueError(
+                f"heal_slot {self.heal_slot} must not also be in the rotation slots "
+                "(thuốc hồi máu chỉ dùng theo ngưỡng HP, không xoay vòng)"
+            )
+        return self
+
+
+class FarmSettings(_StrictModel):
+    """Knobs of the farm/retreat tasks (R3) — shared by every account."""
+
+    # Chu kỳ MONITOR: bao lâu chụp màn kiểm tra một lần (giây)
+    monitor_interval: float = Field(gt=0)
+    # HP dưới ngưỡng liên TIẾP bao nhiêu chu kỳ mới phát HP_LOW
+    # (auto in-game tự uống thuốc — một chu kỳ tụt máu chưa phải khẩn cấp)
+    hp_low_cycles: int = Field(gt=0)
+    # HP dưới mức này (%) thì phát HP_LOW NGAY, không chờ đủ chu kỳ — chống
+    # quái đánh dồn giết nhân vật nhanh hơn chu kỳ giám sát
+    hp_emergency_percent: int = Field(ge=1, le=99)
+    # Số chu kỳ MONITOR liên tiếp không đọc được màn hình trước khi RECOVER
+    lost_cycles: int = Field(gt=0)
+    # Số lần bật lại auto tối đa trong một phiên MONITOR trước khi RECOVER
+    auto_reenable_limit: int = Field(ge=0)
+    # Nút auto ON nhưng nhân vật đứng ngây N chu kỳ MONITOR liền -> tắt/bật
+    # lại auto để đánh thức AI của game (hay "ngủ gật" sau 1-2 phát đánh)
+    monitor_idle_cycles: int = Field(gt=0, default=4)
+    # Chờ các thao tác trên màn bản đồ (mở/đóng/chuyển tab)
+    map_timeout: float = Field(gt=0)
+    # Số lần tap điểm đến trên ảnh bản đồ trước khi coi là thất bại — game
+    # hay nuốt tap đầu ngay sau khi preview map vừa đổi (quan sát AVD 26/10)
+    map_spot_tap_attempts: int = Field(gt=0, default=3)
+    # Sau khi map đóng: chờ tối đa bao lâu để thấy tìm đường THỰC SỰ bắt đầu
+    # (dòng "Đi: ..." hoặc toạ độ HUD đổi) — map đóng không đồng nghĩa đã đi.
+    # Đo trên AVD 26/10: có lúc trễ hơn 5s mới nhúc nhích; đặt quá ngắn thì
+    # task mở lại map và TỰ HUỶ chuyến đi đang khởi động
+    travel_start_timeout: float = Field(gt=0, default=20.0)
+    # Số lần làm lại cả chuỗi mở map -> chọn map -> tap điểm khi tìm đường
+    # không chịu bắt đầu (hay gặp ngay sau login)
+    nav_retries: int = Field(ge=0, default=2)
+    # Đứng yên liên tiếp N chu kỳ (không dòng "Đi:", chưa tới map đích) thì
+    # coi là KẸT giữa đường — game hay dừng ở cổng map thay vì vượt sang
+    travel_stall_cycles: int = Field(gt=0, default=8)
+    # Gỡ kẹt: đứng ngay cổng map game từ chối lệnh đi xuyên map nhưng lệnh
+    # đi tới NPC vẫn ăn — route tới NPC này vài giây để rời chỗ kẹt rồi
+    # điều hướng lại; None = không gỡ, abort như thường
+    unstick_npc_row: str | None = None
+    unstick_walk_seconds: float = Field(ge=0, default=8.0)
+    # Trần thời gian auto tìm đường tới điểm farm (giây)
+    travel_timeout: float = Field(gt=0)
+    # Phát hiện "đã tới nơi": vùng toạ độ HUD đứng yên N chu kỳ liên tiếp
+    arrive_check_interval: float = Field(gt=0)
+    arrive_stable_cycles: int = Field(gt=0)
+    # Tỉ lệ pixel khác nhau tối đa giữa 2 khung vùng toạ độ để coi là "đứng yên"
+    arrive_diff_threshold: float = Field(ge=0.0, le=1.0)
+    # Trần thời gian đứng nghỉ hồi máu trong thành (giây)
+    rest_timeout: float = Field(gt=0)
+    # Hai template nút auto on/off gần giống nhau — chênh lệch điểm match giữa
+    # chúng phải vượt biên này mới dám kết luận trạng thái, không thì coi là
+    # "không rõ" (tránh tap nhầm làm auto bật/tắt loạn)
+    auto_state_margin: float = Field(ge=0.0, le=1.0)
+    # Chờ nhân vật dừng hẳn sau tìm đường rồi mới bật auto (giây) — bật ngay
+    # khoảnh khắc vừa tới nơi thì AI auto của game hay không kích hoạt
+    engage_settle_seconds: float = Field(ge=0)
+    # Sau khi bật auto: chờ nhân vật di chuyển (đi tìm quái) tối đa bao lâu
+    engage_timeout: float = Field(gt=0)
+    # Đứng im quá engage_timeout thì tắt/bật lại auto, tối đa N lần
+    engage_retries: int = Field(ge=0)
+    # Game lỗi: bật auto lần đầu nhân vật chỉ đánh 1 phát rồi đứng ngây —
+    # LUÔN tắt/bật lại auto sau khi bật, chờ N giây giữa hai nhịp; 0 = tắt
+    # chu trình đánh thức chủ động này
+    engage_warmup_toggle_seconds: float = Field(ge=0, default=2.0)
+    # Dải màu HSV của phần MÁU trên thanh HP (đọc % máu bằng màu, không OCR)
+    hp_bar_color: HSVRange
+    # Auto nhấn chiêu + vật phẩm hồi máu trong vòng MONITOR
+    skills: FarmSkillSettings = FarmSkillSettings()
 
 
 class LoginSettings(_StrictModel):
@@ -135,6 +265,7 @@ class Settings(_StrictModel):
     safety: SafetySettings
     sell: SellSettings
     quality: QualitySettings
+    farm: FarmSettings
     login: LoginSettings
     telegram: TelegramSettings
     logging: LoggingSettings
@@ -155,8 +286,32 @@ class AccountLogin(_StrictModel):
 
 
 class AccountFarm(_StrictModel):
+    # Tên map farm, đúng như hiển thị trong game. Tên này sinh ra tên template:
+    # map/row_<slug> (dòng trong tab "Tìm map") và map/hud_name_<slug> (tên map
+    # trên HUD) — xem map_slug() trong tasks/navigate.py.
     map: str
+    # Điểm farm: PIXEL trên ẢNH bản đồ của màn bản đồ (màn 960x540) — tap vào
+    # đó là game tự tìm đường (kể cả xuyên map). Người vận hành chọn điểm bằng
+    # mắt từ ảnh chụp màn bản đồ. (0, 0) = chưa cấu hình — farm task từ chối chạy.
+    spot: tuple[int, int] = (0, 0)
+    # HP dưới ngưỡng này (%) liên tiếp nhiều chu kỳ → tín hiệu HP_LOW, rút về
+    hp_retreat_percent: int = Field(default=30, ge=1, le=99)
+    # Nghỉ trong thành tới khi HP hồi lại >= ngưỡng này (%) mới quay lại farm
+    hp_resume_percent: int = Field(default=90, ge=1, le=100)
+    # Map + điểm an toàn để rút về khi HP thấp (thường là trong thành);
+    # retreat_spot cùng hệ quy chiếu với spot (pixel trên ảnh bản đồ)
+    retreat_map: str = ""
+    retreat_spot: tuple[int, int] = (0, 0)
     gold_transfer_threshold: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _resume_above_retreat(self) -> AccountFarm:
+        if self.hp_resume_percent <= self.hp_retreat_percent:
+            raise ValueError(
+                "hp_resume_percent must be greater than hp_retreat_percent "
+                f"({self.hp_resume_percent} <= {self.hp_retreat_percent})"
+            )
+        return self
 
 
 class AccountConfig(_StrictModel):
@@ -177,6 +332,54 @@ class LoginCoordinates(_StrictModel):
     char_slots: list[tuple[int, int]]
 
 
+class FarmCoordinates(_StrictModel):
+    """Fixed UI positions of the farm flow (no templates possible there)."""
+
+    # Điểm tap mở màn bản đồ (minimap góc phải trên HUD)
+    minimap: tuple[int, int]
+    # ROI thanh HP trên HUD (x, y, w, h) — đọc % máu bằng màu
+    hp_bar_rect: tuple[int, int, int, int]
+    # ROI dòng toạ độ hiện tại trên HUD — pixel-diff phát hiện đứng yên
+    hud_coords_rect: tuple[int, int, int, int]
+    # Vùng ẢNH BẢN ĐỒ trên màn bản đồ (x, y, w, h) — spot 0/0 nghĩa là
+    # "chưa cấu hình, tap vào TÂM vùng này" (trung tâm map đích)
+    map_image_rect: tuple[int, int, int, int]
+    # Tâm 8 ô trên vòng chiêu HUD (ô 1-8). (0, 0) = chưa đo — farm task từ
+    # chối bật auto chiêu với ô chưa đo toạ độ
+    skill_slots: list[tuple[int, int]] = []
+
+    @model_validator(mode="after")
+    def _skill_slots_len(self) -> FarmCoordinates:
+        if self.skill_slots and len(self.skill_slots) != 8:
+            raise ValueError(
+                f"skill_slots must have exactly 8 entries, got {len(self.skill_slots)}"
+            )
+        return self
+
+
+class BagGrid(_StrictModel):
+    """Geometry of the bag's item grid on the shop screen (measured on AVD)."""
+
+    # Góc trái-trên của Ô ĐẦU TIÊN (x, y)
+    origin: tuple[int, int]
+    # Kích thước một ô (w, h)
+    cell: tuple[int, int]
+    # Bước giữa hai ô liền kề (x, y)
+    pitch: tuple[int, int]
+    cols: int = Field(gt=0)
+    rows: int = Field(gt=0)
+
+
+class SellCoordinates(_StrictModel):
+    """Fixed UI geometry of the sell flow (bag grid, money row, page tabs)."""
+
+    bag_grid: BagGrid
+    # Vùng hiển thị tiền (vàng/bạc/đồng) dưới túi — so trước/sau khi bán
+    money_rect: tuple[int, int, int, int]
+    # Nút chuyển trang túi (1, 2, 3) bên phải lưới
+    page_buttons: list[tuple[int, int]]
+
+
 class Coordinates(_StrictModel):
     """Schema of ``config/coordinates.yaml`` — fallback UI coordinates.
 
@@ -184,6 +387,8 @@ class Coordinates(_StrictModel):
     """
 
     login: LoginCoordinates
+    farm: FarmCoordinates
+    sell: SellCoordinates
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:

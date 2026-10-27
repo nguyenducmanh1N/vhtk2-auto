@@ -181,10 +181,63 @@ def test_safety_put_invalid_rejected(client: TestClient) -> None:
     assert r.status_code == 422
 
 
+def test_farm_skills_get_and_put(client: TestClient, workspace: Path) -> None:
+    s = client.get("/api/settings/farm-skills").json()
+    assert s["enabled"] is False
+    assert len(s["slot_points"]) == 8
+    s.update(enabled=True, slots=[1, 2, 3], heal_slot=8, heal_hp_percent=55)
+    s["slot_points"][0] = [777, 444]
+    assert client.put("/api/settings/farm-skills", json=s).status_code == 200, "save failed"
+    after = load_settings(workspace / "settings.yaml")
+    assert after.farm.skills.enabled is True
+    assert after.farm.skills.slots == [1, 2, 3]
+    assert after.farm.skills.heal_slot == 8
+    from vhtk.config import load_coordinates
+
+    coords = load_coordinates(workspace / "coordinates.yaml")
+    assert coords.farm.skill_slots[0] == (777, 444)
+    # comment của 2 file còn sống sau khi ghi
+    assert "Auto nhấn chiêu" in (workspace / "settings.yaml").read_text(encoding="utf-8")
+    assert "vòng chiêu" in (workspace / "coordinates.yaml").read_text(encoding="utf-8")
+
+
+def test_farm_skills_put_rejects_heal_slot_in_rotation(client: TestClient) -> None:
+    s = client.get("/api/settings/farm-skills").json()
+    s.update(slots=[1, 2], heal_slot=2)
+    assert client.put("/api/settings/farm-skills", json=s).status_code == 422
+
+
+def test_farm_skills_put_rejects_bad_slot_points(client: TestClient) -> None:
+    s = client.get("/api/settings/farm-skills").json()
+    s["slot_points"] = [[1, 2]] * 7  # phải đúng 8 ô
+    assert client.put("/api/settings/farm-skills", json=s).status_code == 422
+
+
 def test_broken_account_file_listed_with_error(client: TestClient, workspace: Path) -> None:
     (workspace / "accounts" / "hong.yaml").write_text("name: [oops", encoding="utf-8")
     rows = client.get("/api/accounts").json()
     assert any(row.get("error") for row in rows if row["stem"] == "hong")
+
+
+def test_farm_maps_lists_ready_template_pairs(client: TestClient) -> None:
+    """Chỉ map có đủ cặp row_<slug> + hud_name_<slug> mới được liệt kê,
+    tên hiển thị lấy từ display_name trong manifest."""
+    maps = client.get("/api/farm-maps").json()
+    by_slug = {m["slug"]: m["name"] for m in maps}
+    # 3 map đã chụp đủ cặp trên AVD (templates/v1.0-avd — settings test trỏ repo thật)
+    assert by_slug.get("tuyen_chau") == "Tuyền Châu"
+    assert by_slug.get("long_tuyen_thon") == "Long Tuyền Thôn"
+    assert by_slug.get("bac_tuyen_chau") == "Bắc Tuyền Châu"
+
+
+def test_runner_restart_unknown_account_404(client: TestClient) -> None:
+    r = client.post("/api/runner/restart", json={"account": "khongcoai"})
+    assert r.status_code == 404
+
+
+def test_runner_status_shape(client: TestClient) -> None:
+    s = client.get("/api/runner").json()
+    assert "running" in s and "pids" in s
 
 
 def test_index_served(client: TestClient) -> None:

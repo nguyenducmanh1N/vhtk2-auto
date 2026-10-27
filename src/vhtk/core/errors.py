@@ -57,6 +57,15 @@ class VerifyFailed(TaskError):
     """An action was performed but its expected effect was not observed."""
 
 
+class TravelStalled(TaskError):
+    """Auto-pathfinding stopped before reaching the target map.
+
+    Quan sát AVD 26/10: game tìm đường tới cổng map (vd 197/175 cổng bắc
+    Tuyền Châu) rồi thỉnh thoảng dừng hẳn thay vì vượt sang map bên. Task
+    bắt lỗi này để điều hướng lại thay vì chờ hết travel_timeout.
+    """
+
+
 class TaskDefinitionError(VhtkError):
     """A task's state graph is invalid (programming error, not a runtime one).
 

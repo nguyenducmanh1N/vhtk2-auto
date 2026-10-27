@@ -16,7 +16,7 @@ from __future__ import annotations
 import time
 from enum import Enum
 from pathlib import Path
-from typing import Protocol, TypeAlias
+from typing import Callable, Protocol, TypeAlias
 
 import cv2
 import numpy as np
@@ -43,8 +43,35 @@ RECONNECT_BUTTONS: tuple[str, ...] = (
     "common/btn_confirm",
 )
 REVIVE_BUTTONS: tuple[str, ...] = ("common/btn_revive",)
-LOGIN_MARKERS: tuple[str, ...] = ("login/title", "login/btn_enter")
-POPUP_CLOSE_BUTTONS: tuple[str, ...] = ("common/btn_close", "common/btn_x")
+# hộp "Không lấy được cấu hình cập nhật. Thử lại?" khi mạng yếu lúc game
+# khởi động — bấm Thử lại là hành động an toàn duy nhất, mọi task đều gặp
+RETRY_BUTTONS: tuple[str, ...] = ("login/btn_retry_config",)
+# Hộp thoại NPC cốt truyện (header "Hệ Thống", các lựa chọn đánh dấu ◆):
+# lựa chọn DƯỚI CÙNG theo quy ước của game là "từ chối / rời đi"
+# ("Ta chỉ đến thăm ngươi thôi!", "Trở lại"...) — an toàn để thoát hội thoại
+DIALOG_BULLET: str = "common/dialog_bullet"
+# Màn LÀM VIỆC hợp lệ: khi đang mở (vd cửa hiệu NPC — kèm túi đồ), KHÔNG dọn
+# popup — nút X của túi/shop không phải popup lạc, đóng nó là phá task đang chạy
+WORKSPACE_MARKERS: tuple[str, ...] = (
+    "shop/cua_hieu_header",
+    # màn bản đồ đang mở là một bước của navigate — X của nó match
+    # common/btn_x, để recovery "đóng popup" là phá ngang chuỗi điều hướng
+    "map/btn_confirm_coords",
+)
+LOGIN_MARKERS: tuple[str, ...] = (
+    "login/title",
+    "login/btn_enter",
+    # form "SIGN IN WITH 3CID" — phiên SDK mất là rơi về đây giữa chừng;
+    # login task biết điền form này (có credentials trong config)
+    "login/signin_title",
+)
+POPUP_CLOSE_BUTTONS: tuple[str, ...] = (
+    "common/btn_close",
+    "common/btn_x",
+    # hộp thoại hỏi Đồng ý/Huỷ bỏ không có nút X: TỪ CHỐI là lựa chọn an toàn
+    # mặc định cho mọi câu hỏi lạ (vd "dùng chế độ tự động sắp xếp?")
+    "common/btn_cancel",
+)
 
 # Chặn vòng lặp "đóng popup nhưng popup không chịu đóng" trong một lần check
 _MAX_POPUP_CLOSES = 3
@@ -77,6 +104,8 @@ class Recovery:
         notifier: alerted on unknown screens.
         unknown_dir: where unknown-screen evidence is written
             (e.g. ``logs/unknown``); created on first use.
+        app_in_foreground: optional zero-arg probe returning whether the game
+            app is currently in the foreground; ``None`` skips the check.
     """
 
     def __init__(
@@ -85,11 +114,13 @@ class Recovery:
         vision: Vision,
         notifier: Notifier,
         unknown_dir: Path,
+        app_in_foreground: Callable[[], bool] | None = None,
     ) -> None:
         self._device = device
         self._vision = vision
         self._notifier = notifier
         self._unknown_dir = unknown_dir
+        self._app_in_foreground = app_in_foreground
 
     def check(self) -> RecoveryOutcome:
         """Quick pass before every state: fix what is fixable in place.
@@ -97,15 +128,28 @@ class Recovery:
         Returns ``OK`` when the screen shows none of the known-bad markers;
         the task state then has to judge the screen itself.
         """
+        # game crash văng về launcher Android: không màn hình nào của game
+        # tồn tại nữa — RELOGIN để orchestrator/runner chạy lại login (login
+        # tự khởi động app)
+        if self._app_in_foreground is not None and not self._app_in_foreground():
+            log.warning("recovery: game not in foreground (crashed or closed)")
+            return RecoveryOutcome.RELOGIN
         frame = self._vision.capture_screen()
         if self._find_any(DISCONNECT_MARKERS, frame) is not None:
             return self._handle_disconnect(frame)
         revive = self._find_any(REVIVE_BUTTONS, frame)
         if revive is not None:
             return self._tap_and_report("revive", revive)
+        retry = self._find_any(RETRY_BUTTONS, frame)
+        if retry is not None:
+            return self._tap_and_report("config-retry", retry)
         if self._find_any(LOGIN_MARKERS, frame) is not None:
             log.warning("recovery: thrown back to login screen")
             return RecoveryOutcome.RELOGIN
+        # màn làm việc hợp lệ (cửa hiệu...) đang mở: đừng dọn popup —
+        # X của túi/shop là một phần của màn đó, đóng nó là phá task
+        if self._find_any(WORKSPACE_MARKERS, frame) is not None:
+            return RecoveryOutcome.OK
         return self._close_popups(frame)
 
     def on_state_failure(self, state: str, reason: str) -> RecoveryOutcome:
@@ -156,12 +200,31 @@ class Recovery:
         for _ in range(_MAX_POPUP_CLOSES):
             button = self._find_any(POPUP_CLOSE_BUTTONS, current)
             if button is None:
-                break
-            log.info("recovery: closing popup", at=button.center)
-            self._device.tap(*button.center)
+                if not self._decline_dialog(current):
+                    break
+            else:
+                log.info("recovery: closing popup", at=button.center)
+                self._device.tap(*button.center)
             closed += 1
             current = self._vision.capture_screen()
         return RecoveryOutcome.RECOVERED if closed > 0 else RecoveryOutcome.OK
+
+    def _decline_dialog(self, frame: Image) -> bool:
+        """Dismiss an NPC story dialog by tapping its BOTTOM-MOST ◆ option.
+
+        Story dialogs block every other tap (quest auto-routing opens them
+        uninvited). The bottom option is the game's decline/leave by
+        convention; tapping it never accepts anything.
+        """
+        if DIALOG_BULLET not in self._vision.store:
+            return False
+        bullets = self._vision.find_all(DIALOG_BULLET, screenshot=frame)
+        if not bullets:
+            return False
+        lowest = max(bullets, key=lambda m: m.bbox[1])
+        log.warning("recovery: NPC dialog on screen, declining", at=lowest.center)
+        self._device.tap(*lowest.center)
+        return True
 
     def _save_unknown(self, state: str, frame: Image) -> str:
         self._unknown_dir.mkdir(parents=True, exist_ok=True)

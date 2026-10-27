@@ -141,6 +141,7 @@
     </div>
     <nav class="tabs">
       <button id="tabAcc" class="on">Tài khoản</button>
+      <button id="tabSkill">Chiêu</button>
       <button id="tabSafe">An toàn</button>
     </nav>
     <div class="acc-list" id="accList"></div>
@@ -163,6 +164,26 @@
   </form>
 </dialog>
 
+<dialog id="dlgPick" style="max-width:none">
+  <p style="margin:0 0 10px; color:var(--ink-dim); font-size:13.5px" id="pickMsg">
+    Click lên ảnh để chọn điểm tap. Ảnh là màn hình thiết bị NGAY LÚC NÀY —
+    hãy mở sẵn màn bản đồ đúng map trong game trước.
+  </p>
+  <div style="position:relative; line-height:0">
+    <img id="pickImg" alt="screenshot" style="max-width:min(960px,88vw); cursor:crosshair; border-radius:6px">
+    <div id="pickDot" style="position:absolute; width:14px; height:14px; border:2px solid var(--gold);
+         border-radius:50%; transform:translate(-50%,-50%); display:none; pointer-events:none"></div>
+  </div>
+  <div style="display:flex; gap:10px; justify-content:space-between; margin-top:12px; align-items:center">
+    <span id="pickXY" style="font-family:var(--mono); color:var(--ink-dim); font-size:13px"></span>
+    <span style="display:flex; gap:10px">
+      <button class="btn" id="pickRefresh" type="button">Chụp lại</button>
+      <button class="btn" id="pickCancel" type="button">Huỷ</button>
+      <button class="btn gold" id="pickOk" type="button" disabled>Dùng điểm này</button>
+    </span>
+  </div>
+</dialog>
+
 <script>
 "use strict";
 const $ = (s) => document.querySelector(s);
@@ -177,7 +198,7 @@ const api = async (method, url, body) => {
 };
 const errText = (e) => Array.isArray(e.detail)
   ? e.detail.map((d) => `${d.field}: ${d.message}`).join("\n")
-  : (e.detail || "Lỗi không xác định");
+  : (e.detail || e.message || "Lỗi không xác định");
 
 let accounts = [];
 let current = null;   // stem đang mở
@@ -212,7 +233,21 @@ function field(label, path, value, opts = {}) {
     <input data-path="${path}" type="${type}" value="${value ?? ""}" ${opts.step ? `step="${opts.step}"` : ""}>${hint}</label>`;
 }
 
-function renderAccount(acc) {
+function mapSelect(label, path, value, maps, hint) {
+  // chỉ liệt kê map ĐÃ đủ template (chọn là chắc chắn chạy được);
+  // giá trị hiện tại không nằm trong danh sách thì vẫn hiện kèm cảnh báo
+  const known = maps.some((m) => m.name === value);
+  const opts = maps.map((m) =>
+    `<option value="${m.name}" ${m.name === value ? "selected" : ""}>${m.name}</option>`).join("");
+  const stray = value && !known
+    ? `<option value="${value}" selected>⚠ ${value} — thiếu template</option>` : "";
+  const empty = !value ? `<option value="" selected disabled>— chọn map —</option>` : "";
+  return `<label><span>${label}</span>
+    <select data-path="${path}">${empty}${stray}${opts}</select>
+    <span class="hint">${hint}</span></label>`;
+}
+
+function renderAccount(acc, maps) {
   $("#main").innerHTML = `
   <div class="page">
     <h2>${acc.name || acc.stem}</h2>
@@ -242,7 +277,30 @@ function renderAccount(acc) {
       ${field("Slot nhân vật (1 = trên cùng)", "login.character_slot", acc.login.character_slot, { type: "number" })}
     </fieldset>
     <fieldset><legend>Farm</legend>
-      ${field("Map farm", "farm.map", acc.farm.map, { hint: "đúng tên map trong game, để OCR đối chiếu" })}
+      <div class="row">
+        ${mapSelect("Map farm", "farm.map", acc.farm.map, maps, "chỉ liệt kê map đã có đủ template; muốn thêm map mới thì chụp cặp template row/hud_name")}
+        <label><span>Điểm tap trên ảnh bản đồ — farm (pixel X / Y)</span>
+          <span class="row" style="gap:8px">
+            <input data-path="farm.spot.0" type="number" value="${acc.farm.spot[0]}">
+            <input data-path="farm.spot.1" type="number" value="${acc.farm.spot[1]}">
+            <button type="button" class="btn pick-spot" data-prefix="farm.spot">Chọn trên ảnh</button>
+          </span>
+          <span class="hint">0/0 = mặc định tap vào TÂM map đích. Muốn chọn điểm khác: đây là pixel màn hình (960x540) nơi tool tap lên ẢNH bản đồ (không phải toạ độ trong game) — mở màn bản đồ đúng map trong game rồi bấm "Chọn trên ảnh".</span></label>
+      </div>
+      <div class="row">
+        ${field("Rút về khi HP dưới (%)", "farm.hp_retreat_percent", acc.farm.hp_retreat_percent, { type: "number", hint: "máu dưới mức này nhiều chu kỳ liền là về thành nghỉ" })}
+        ${field("Quay lại farm khi HP đạt (%)", "farm.hp_resume_percent", acc.farm.hp_resume_percent, { type: "number", hint: "phải lớn hơn ngưỡng rút về" })}
+      </div>
+      <div class="row">
+        ${mapSelect("Map rút về (thành)", "farm.retreat_map", acc.farm.retreat_map, maps, "nơi đứng nghỉ hồi máu, vd Tuyền Châu")}
+        <label><span>Điểm tap trên ảnh bản đồ — nghỉ (pixel X / Y)</span>
+          <span class="row" style="gap:8px">
+            <input data-path="farm.retreat_spot.0" type="number" value="${acc.farm.retreat_spot[0]}">
+            <input data-path="farm.retreat_spot.1" type="number" value="${acc.farm.retreat_spot[1]}">
+            <button type="button" class="btn pick-spot" data-prefix="farm.retreat_spot">Chọn trên ảnh</button>
+          </span>
+          <span class="hint">0/0 = mặc định tap vào TÂM map thành; muốn chọn chỗ nghỉ khác thì mở màn bản đồ map thành rồi bấm "Chọn trên ảnh"</span></label>
+      </div>
       ${field("Ngưỡng vàng chuyển về main", "farm.gold_transfer_threshold", acc.farm.gold_transfer_threshold, { type: "number", hint: "vượt mức này sẽ hẹn giao dịch với acc main" })}
     </fieldset>
     <button class="btn danger" id="btnDel">Xoá tài khoản này</button>
@@ -266,7 +324,46 @@ function collect(acc) {
   return out;
 }
 
+// Công cụ chọn điểm tap: chụp màn thiết bị, click lên ảnh -> pixel 960x540.
+// Ảnh hiển thị có thể bị thu nhỏ nên phải quy đổi theo naturalWidth/clientWidth.
+// stemOf(): tài khoản dùng để chụp màn — trang tài khoản là chính nó,
+// trang Chiêu là thiết bị được chọn trong dropdown.
+function wireSpotPickers(stemOf) {
+  const dlg = $("#dlgPick"), img = $("#pickImg"), dot = $("#pickDot");
+  const xy = $("#pickXY"), ok = $("#pickOk"), msg = $("#pickMsg");
+  let picked = null, prefix = null;
+
+  const load = () => {
+    picked = null; ok.disabled = true; dot.style.display = "none"; xy.textContent = "";
+    img.src = `/api/accounts/${stemOf()}/screenshot?ts=${Date.now()}`;
+  };
+  img.onerror = () => { msg.textContent = "Không chụp được màn hình — thiết bị có đang chạy không?"; };
+  img.onclick = (ev) => {
+    const r = img.getBoundingClientRect();
+    const scaleX = img.naturalWidth / r.width, scaleY = img.naturalHeight / r.height;
+    picked = [Math.round((ev.clientX - r.left) * scaleX), Math.round((ev.clientY - r.top) * scaleY)];
+    dot.style.left = `${ev.clientX - r.left}px`; dot.style.top = `${ev.clientY - r.top}px`;
+    dot.style.display = "block";
+    xy.textContent = `pixel: ${picked[0]} / ${picked[1]}`;
+    ok.disabled = false;
+  };
+  $("#pickRefresh").onclick = load;
+  $("#pickCancel").onclick = () => dlg.close();
+  ok.onclick = () => {
+    if (!picked || !prefix) return;
+    for (const i of [0, 1]) {
+      const inp = document.querySelector(`[data-path="${prefix}.${i}"]`);
+      inp.value = picked[i];
+      inp.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    dlg.close();
+  };
+  for (const btn of document.querySelectorAll(".pick-spot"))
+    btn.onclick = () => { prefix = btn.dataset.prefix; load(); dlg.showModal(); };
+}
+
 function wireAccountPage(acc) {
+  wireSpotPickers(() => acc.stem);
   for (const eye of document.querySelectorAll(".pw-eye")) {
     eye.onclick = () => {
       const inp = eye.parentElement.querySelector("input");
@@ -278,11 +375,21 @@ function wireAccountPage(acc) {
   for (const el of document.querySelectorAll("[data-path], select[data-path]"))
     el.addEventListener("input", () => { msg.textContent = "Có thay đổi chưa lưu."; msg.className = "msg"; });
   $("#btnSave").onclick = async () => {
+    const btn = $("#btnSave");
     try {
+      btn.disabled = true;
       await api("PUT", `/api/accounts/${acc.stem}`, collect(acc));
       msg.textContent = "Đã lưu vào file."; msg.className = "msg ok";
       refreshList();
+      // runner đọc cấu hình lúc khởi động — đang chạy thì chạy lại để áp dụng
+      const st = await api("GET", "/api/runner").catch(() => ({ running: false }));
+      if (st.running) {
+        msg.textContent = "Đã lưu — đang khởi động lại runner với cấu hình mới (dừng sạch ở điểm an toàn, tối đa ~60s)...";
+        await api("POST", "/api/runner/restart", { account: acc.stem });
+        msg.textContent = "Đã lưu và chạy lại runner với cấu hình mới ✓"; msg.className = "msg ok";
+      }
     } catch (e) { msg.textContent = errText(e); msg.className = "msg err"; }
+    finally { btn.disabled = false; }
   };
   $("#btnDel").onclick = async () => {
     if (!confirm(`Xoá file tài khoản ${acc.stem}.yaml? Hành động này không hoàn tác được.`)) return;
@@ -294,7 +401,13 @@ function wireAccountPage(acc) {
 async function openAccount(stem) {
   current = stem;
   await refreshList();
-  try { renderAccount(await api("GET", `/api/accounts/${stem}`)); }
+  try {
+    const [acc, maps] = await Promise.all([
+      api("GET", `/api/accounts/${stem}`),
+      api("GET", "/api/farm-maps").catch(() => []),
+    ]);
+    renderAccount(acc, maps);
+  }
   catch (e) {
     $("#main").innerHTML = `<div class="empty"><h2>File ${stem}.yaml không đọc được</h2>
       <p>${errText(e)}</p><p>Sửa tay file này hoặc xoá rồi tạo lại từ giao diện.</p>
@@ -308,6 +421,88 @@ function renderEmpty() {
     <p>Mỗi tài khoản là một file YAML trong <code>config/accounts/</code>. Giao diện này
     đọc và ghi đúng các file đó — sửa tay bằng editor vẫn hoạt động như thường.</p>
     <p>Bắt đầu bằng nút <b>Thêm tài khoản</b> ở góc trái dưới.</p></div>`;
+}
+
+/* ---- tab Chiêu (auto nhấn chiêu + vật phẩm hồi máu) ---- */
+async function renderSkills() {
+  const [s, accs] = await Promise.all([
+    api("GET", "/api/settings/farm-skills"),
+    api("GET", "/api/accounts").catch(() => []),
+  ]);
+  const devOpts = accs.filter((a) => !a.error).map((a) =>
+    `<option value="${a.stem}">${a.name} (${a.adb_serial})</option>`).join("");
+  const healOpts = [0,1,2,3,4,5,6,7,8].map((n) =>
+    `<option value="${n}" ${n === s.heal_slot ? "selected" : ""}>${n === 0 ? "Không dùng" : "Ô " + n}</option>`).join("");
+  const slotRows = [1,2,3,4,5,6,7,8].map((n) => `
+    <div class="row" style="align-items:center; margin-bottom:6px">
+      <label class="toggle" style="flex:0 0 150px; margin:0">
+        <input type="checkbox" data-slot="${n}" ${s.slots.includes(n) ? "checked" : ""}>
+        <span>Ô ${n}${n === 8 ? ' <span class="sub">trên cùng — vật phẩm</span>' : ""}</span>
+      </label>
+      <input data-path="slot_points.${n-1}.0" type="number" value="${s.slot_points[n-1][0]}" style="width:90px; flex:none">
+      <input data-path="slot_points.${n-1}.1" type="number" value="${s.slot_points[n-1][1]}" style="width:90px; flex:none">
+      <button type="button" class="btn pick-spot" data-prefix="slot_points.${n-1}">Chọn trên ảnh</button>
+    </div>`).join("");
+  $("#main").innerHTML = `
+  <div class="page">
+    <h2>Auto nhấn chiêu</h2>
+    <p class="lead">Mục <code>farm.skills</code> của <code>config/settings.yaml</code> + toạ độ 8 ô trong
+    <code>config/coordinates.yaml</code> — dùng chung cho mọi acc farm (cùng môn phái).</p>
+    <fieldset><legend>Chế độ</legend>
+      <label class="toggle"><input type="checkbox" data-k="enabled" ${s.enabled ? "checked" : ""}>
+        <span>Bật auto nhấn chiêu khi farm<span class="sub">xoay vòng các ô đã tích bên dưới; chiêu đang hồi thì cú tap vô hại</span></span></label>
+      ${field("Giãn cách giữa 2 lần nhấn chiêu (giây)", "cast_interval", s.cast_interval,
+        { type: "number", step: "any", hint: "sàn thực tế do giới hạn an toàn (nghỉ giữa thao tác + thao tác/phút) quyết định — đặt nhỏ hơn cũng không nhanh hơn" })}
+    </fieldset>
+    <fieldset><legend>Vật phẩm hồi máu</legend>
+      <div class="row">
+        <label><span>Ô chứa vật phẩm hồi máu</span>
+          <select data-k2="heal_slot">${healOpts}</select>
+          <span class="hint">ô này KHÔNG xoay vòng — chỉ nhấn khi máu tụt dưới ngưỡng</span></label>
+        ${field("Dùng khi HP dưới (%)", "heal_hp_percent", s.heal_hp_percent,
+          { type: "number", hint: "nên cao hơn ngưỡng rút về của acc: thuốc cứu trước, hết cứu nổi mới rút" })}
+        ${field("Giãn cách 2 lần dùng thuốc (giây)", "heal_cooldown", s.heal_cooldown, { type: "number", step: "any" })}
+      </div>
+    </fieldset>
+    <fieldset><legend>Vị trí 8 ô trên vòng chiêu (pixel X / Y, màn 960x540)</legend>
+      <label><span>Thiết bị chụp màn hình để chọn điểm</span>
+        <select id="skillDev">${devOpts || '<option value="">— chưa có tài khoản —</option>'}</select>
+        <span class="hint">mở game vào thế giới (vòng chiêu hiện rõ) rồi bấm "Chọn trên ảnh" từng ô; tích chọn = ô nằm trong vòng xoay chiêu</span></label>
+      ${slotRows}
+    </fieldset>
+  </div>
+  <div class="savebar">
+    <span class="msg" id="msg">Chưa có thay đổi.</span>
+    <button class="btn gold" id="btnSaveSkill">Lưu cấu hình chiêu</button>
+  </div>`;
+
+  wireSpotPickers(() => $("#skillDev").value);
+  const msg = $("#msg");
+  for (const el of document.querySelectorAll("[data-k],[data-k2],[data-path],[data-slot]"))
+    el.addEventListener("input", () => { msg.textContent = "Có thay đổi chưa lưu."; msg.className = "msg"; });
+  $("#btnSaveSkill").onclick = async () => {
+    const body = {
+      enabled: $('[data-k="enabled"]').checked,
+      slots: [...document.querySelectorAll("[data-slot]")]
+        .filter((el) => el.checked).map((el) => Number(el.dataset.slot)),
+      cast_interval: Number($('[data-path="cast_interval"]').value),
+      heal_slot: Number($('[data-k2="heal_slot"]').value),
+      heal_hp_percent: Number($('[data-path="heal_hp_percent"]').value),
+      heal_cooldown: Number($('[data-path="heal_cooldown"]').value),
+      slot_points: [0,1,2,3,4,5,6,7].map((i) => [
+        Number(document.querySelector(`[data-path="slot_points.${i}.0"]`).value),
+        Number(document.querySelector(`[data-path="slot_points.${i}.1"]`).value),
+      ]),
+    };
+    try {
+      await api("PUT", "/api/settings/farm-skills", body);
+      const st = await api("GET", "/api/runner").catch(() => ({ running: false }));
+      msg.textContent = st.running
+        ? "Đã lưu — runner đang chạy đọc cấu hình lúc khởi động, hãy chạy lại runner (lưu lại ở tab Tài khoản) để áp dụng."
+        : "Đã lưu vào settings.yaml + coordinates.yaml.";
+      msg.className = "msg ok";
+    } catch (e) { msg.textContent = errText(e); msg.className = "msg err"; }
+  };
 }
 
 /* ---- tab An toàn ---- */
@@ -383,10 +578,20 @@ async function renderSafety() {
 }
 
 /* ---- điều hướng ---- */
+// lỗi tải trang (server cũ thiếu endpoint, server chết...) phải HIỆN RA,
+// không được nuốt im lặng — người dùng tưởng bấm không ăn
+function renderError(e) {
+  $("#main").innerHTML = `<div class="empty"><h2>Không tải được trang</h2>
+    <p>${errText(e)}</p>
+    <p>Hay gặp nhất: app quản lý đang chạy bằng phiên bản cũ — chạy lại bằng
+    <code>./vhtk restart</code> rồi tải lại trang này.</p></div>`;
+}
 $("#tabAcc").onclick = () => { tab = "acc"; paintTabs(); current ? openAccount(current) : renderEmpty(); };
-$("#tabSafe").onclick = () => { tab = "safe"; paintTabs(); renderSafety(); };
+$("#tabSkill").onclick = () => { tab = "skill"; paintTabs(); renderSkills().catch(renderError); };
+$("#tabSafe").onclick = () => { tab = "safe"; paintTabs(); renderSafety().catch(renderError); };
 function paintTabs() {
   $("#tabAcc").classList.toggle("on", tab === "acc");
+  $("#tabSkill").classList.toggle("on", tab === "skill");
   $("#tabSafe").classList.toggle("on", tab === "safe");
 }
 $("#btnNew").onclick = () => { $("#newStem").value = ""; $("#dlgNew").showModal(); };
@@ -399,7 +604,8 @@ $("#dlgNew").addEventListener("close", async () => {
     const body = tpl || { name: stem, role: "farm",
       ldplayer: { index: 0, adb_serial: "emulator-5554" },
       login: { server: "", username: "", password: "", character_slot: 1 },
-      farm: { map: "", gold_transfer_threshold: 1000000 } };
+      farm: { map: "", spot: [0, 0], hp_retreat_percent: 30, hp_resume_percent: 90,
+              retreat_map: "", retreat_spot: [0, 0], gold_transfer_threshold: 1000000 } };
     body.name = stem;
     await api("POST", `/api/accounts/${stem}`, body);
     tab = "acc"; paintTabs(); await openAccount(stem);

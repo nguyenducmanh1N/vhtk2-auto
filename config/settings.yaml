@@ -29,7 +29,8 @@ vision:
   # Timeout mặc định (giây) khi chờ một template xuất hiện
   default_timeout: 10.0
   # Khoảng nghỉ (giây) giữa 2 lần chụp màn khi đang chờ template
-  poll_interval: 0.5
+  # (0.3 — AVD chụp ~250ms/khung nên poll dày hơn vẫn kịp; mọi wait_for nhanh lên)
+  poll_interval: 0.3
   # Match trên ảnh xám (nhanh hơn ~3 lần). Template nào PHẢI phân biệt bằng màu
   # (vd icon giống nhau khác màu) thì đặt grayscale: false riêng cho template đó
   # trong templates/<version>/manifest.yaml
@@ -54,26 +55,49 @@ safety:
   # Tên file kill-switch ở thư mục gốc; file xuất hiện → dừng sạch mọi task
   kill_switch_file: STOP
   # Giới hạn tốc độ: tối đa N hành động (tap/swipe/key) mỗi phút
-  max_actions_per_minute: 30
+  # (60 — đủ cho chuỗi điều hướng + auto chiêu không bị nghẽn; muốn "giống
+  # người" hơn trên server thật thì hạ lại 30)
+  max_actions_per_minute: 60
   # Trần số hành động không hoàn tác (bán/mua/giao dịch) THỰC THI mỗi phiên chạy;
   # vượt trần gần như chắc chắn là bug lặp → task ABORT ngay
   max_irreversible_per_session: 200
   # Số lần RECOVER liên tiếp tối đa cho một state trước khi ABORT
   max_recover_attempts: 3
-  # Delay ngẫu nhiên (giây) giữa các thao tác, tránh spam server
+  # Delay ngẫu nhiên (giây) giữa các thao tác, tránh spam server.
+  # (0.3-0.8 cho máy dev — chuỗi mở map/chọn map ~5-7 cú tap nhanh lên rõ;
+  # chạy production muốn an toàn hơn thì trả về 0.5-2.0)
   action_delay:
-    min_seconds: 0.5
-    max_seconds: 2.0
+    min_seconds: 0.3
+    max_seconds: 0.8
 
+# Task bán đồ (R3b). PHÁT HIỆN QUAN TRỌNG trên AVD: trong chế độ Bán của shop,
+# TAP LÀ BÁN NGAY — game không hỏi xác nhận. Mọi lớp bảo vệ nằm ở tool:
+# dry_run -> confirm_mode -> WHITELIST icon -> ngưỡng phẩm chất -> guard từng item.
 sell:
   # Ngưỡng phẩm chất: item có phẩm chất >= ngưỡng này KHÔNG bao giờ bán
   # (0=trắng, 1=lục, 2=lam, 3=tím, 4=cam)
   quality_blacklist_threshold: 2
-  # Danh sách tên item không bao giờ bán (khớp theo OCR tên item)
+  # Danh sách tên item không bao giờ bán (khớp OCR tên — dùng trên Windows;
+  # trên Mac lớp bảo vệ chính là whitelist icon bên dưới)
   item_blacklist:
     - "Phù về thành"
     - "Thuốc hồi sinh lực"
     - "Thuốc hồi nội lực"
+  # Bán 1 lần sau mỗi N chu kỳ rút-về-thành nghỉ (đằng nào cũng đang ở thành)
+  every_n_retreats: 2
+  # WHITELIST: chỉ bán ô khớp template icon sell/ok_* với điểm >= ngưỡng này;
+  # đồ lạ/mới/chưa có template thì KHÔNG BAO GIỜ bán
+  icon_match_threshold: 0.85
+  # Màu nền vàng-xanh game tô lên ô "bán được" trong chế độ Bán (đo AVD)
+  highlight: {h: [25, 45], s: [60, 255], v: [80, 220]}
+  # Tỉ lệ pixel nền tối thiểu khớp màu trên để coi ô là "bán được"
+  highlight_min_fraction: 0.30
+  # Số trang túi quét mỗi lần bán (đồ rơi dồn trang đầu; tăng khi cần)
+  max_pages: 1
+  # Chờ mở shop / chuyển chế độ Bán (giây)
+  shop_timeout: 12.0
+  # Trần thời gian game tự tìm đường tới NPC trong thành (giây)
+  npc_route_timeout: 90.0
 
 # Nhận diện phẩm chất item qua màu VIỀN ô item (không dùng template matching).
 # Dải màu theo chuẩn HSV của OpenCV: H 0..179, S/V 0..255.
@@ -85,11 +109,100 @@ quality:
   # Tỉ lệ pixel viền tối thiểu rơi vào một dải màu để kết luận phẩm chất
   min_match_fraction: 0.10
   colors:
-    trắng: { h: [0, 179], s: [0, 60], v: [160, 255] }
-    lục: { h: [40, 85], s: [70, 255], v: [70, 255] }
-    lam: { h: [90, 128], s: [70, 255], v: [70, 255] }
-    tím: { h: [129, 158], s: [50, 255], v: [70, 255] }
-    cam: { h: [8, 28], s: [100, 255], v: [120, 255] }
+    trắng: {h: [0, 179], s: [0, 60], v: [160, 255]}
+    lục: {h: [40, 85], s: [70, 255], v: [70, 255]}
+    lam: {h: [90, 128], s: [70, 255], v: [70, 255]}
+    tím: {h: [129, 158], s: [50, 255], v: [70, 255]}
+    cam: {h: [8, 28], s: [100, 255], v: [120, 255]}
+
+# Task farm (R3) — di chuyển tới điểm farm, bật auto in-game, giám sát
+farm:
+  # Chu kỳ MONITOR: bao lâu chụp màn kiểm tra một lần (giây)
+  # (2s — đo thực tế 2026-10-26: quái có thể rút 20-30% máu trong 5s,
+  # lấy mẫu thưa là chết trước khi kịp phát hiện)
+  monitor_interval: 2.0
+  # HP dưới ngưỡng liên tiếp bao nhiêu chu kỳ mới phát tín hiệu HP_LOW
+  # (auto in-game có tự uống thuốc — 1 chu kỳ tụt máu chưa phải khẩn cấp)
+  hp_low_cycles: 3
+  # HP dưới mức này (%) thì phát HP_LOW NGAY lập tức, không chờ đủ chu kỳ
+  # (chống quái đánh dồn giết nhân vật nhanh hơn 3 chu kỳ giám sát)
+  hp_emergency_percent: 25
+  # Số chu kỳ liên tiếp không đọc được màn hình trước khi RECOVER
+  lost_cycles: 3
+  # Số lần bật lại auto tối đa trong một phiên MONITOR trước khi RECOVER
+  auto_reenable_limit: 5
+  # Nút auto ON nhưng đứng ngây N chu kỳ liền -> tắt/bật lại auto đánh thức
+  # AI của game (hay ngủ gật sau 1-2 phát đánh)
+  monitor_idle_cycles: 4
+  # Chờ các thao tác trên màn bản đồ: mở, đóng, chuyển tab (giây)
+  map_timeout: 10.0
+  # Số lần tap điểm đến trên ảnh bản đồ — game hay nuốt tap đầu sau khi
+  # preview map vừa đổi, nên cần thử lại tại chỗ
+  map_spot_tap_attempts: 3
+  # Sau khi map đóng: chờ thấy tìm đường thực sự bắt đầu (giây) — có lúc
+  # trễ >5s mới nhúc nhích; quá ngắn thì task mở lại map và tự huỷ chuyến đi
+  travel_start_timeout: 20.0
+  # Số lần làm lại chuỗi mở map -> chọn -> tap khi tìm đường không bắt đầu
+  nav_retries: 2
+  # Đứng yên N chu kỳ (không dòng "Đi:", chưa tới map đích) = kẹt giữa đường
+  # (game hay dừng ở cổng map) -> điều hướng lại
+  travel_stall_cycles: 8
+  # Gỡ kẹt cổng map: route tới NPC này (lệnh NPC luôn ăn) vài giây để rời
+  # chỗ chết rồi điều hướng lại
+  unstick_npc_row: 'shop/row_chu_tap_hoa'
+  unstick_walk_seconds: 8.0
+  # Trần thời gian auto tìm đường tới điểm farm (giây) — tìm đường xuyên VÙNG
+  # hoạt động (đã kiểm chứng Tương Dương -> Tuyền Châu) nhưng chuyến đi rất dài
+  travel_timeout: 600.0
+  # Phát hiện "đã tới nơi": vùng toạ độ HUD đứng yên N chu kỳ liên tiếp
+  # (1s x 3 chu kỳ = xác nhận trong ~3s thay vì 6s; vẫn 3 chu kỳ để không
+  # nhận nhầm lúc nhân vật khựng giữa đường)
+  arrive_check_interval: 1.0
+  arrive_stable_cycles: 3
+  # Tỉ lệ pixel khác nhau tối đa giữa 2 khung vùng toạ độ để coi là "đứng yên"
+  arrive_diff_threshold: 0.02
+  # Trần thời gian đứng nghỉ hồi máu trong thành (giây)
+  rest_timeout: 600.0
+  # Hai template nút auto on/off gần giống nhau (đo AVD: chênh 0.03–0.04 khi
+  # chắc chắn) — chênh lệch điểm dưới biên này coi là "không rõ", không tap
+  auto_state_margin: 0.02
+  # Chờ nhân vật dừng hẳn sau tìm đường rồi mới bật auto (giây)
+  # (1s là đủ vì sau đó còn warmup toggle đánh thức AI)
+  engage_settle_seconds: 1.0
+  # Sau khi bật auto: chờ nhân vật nhúc nhích (đi tìm quái) tối đa bao lâu (giây);
+  # đứng im quá hạn thì tắt/bật lại auto (quan sát thực tế: bật ngay lúc vừa
+  # dừng chân thì AI auto hay đơ, phải tắt bật lại)
+  # (6s — log 27/10 cho thấy khi đơ thì đơ luôn, chờ 10s chỉ phí; re-toggle
+  # sớm hơn làm cả chu trình engage nhanh lên)
+  engage_timeout: 6.0
+  # Số lần tắt/bật lại auto tối đa khi nhân vật vẫn đứng im
+  engage_retries: 1
+  # Game lỗi "bật auto đánh 1 phát rồi đứng": luôn tắt/bật lại auto sau khi
+  # bật, chờ N giây giữa hai nhịp (0 = bỏ chu trình đánh thức)
+  engage_warmup_toggle_seconds: 2.0
+  # Dải màu HSV phần MÁU của thanh HP (đo trên AVD 2026-10-25: đỏ ~H 0-8 & 172-179)
+  # h quấn vòng được (lo > hi) vì đỏ nằm hai đầu bánh xe hue
+  hp_bar_color: {h: [172, 8], s: [120, 255], v: [90, 255]}
+  # --- Auto nhấn chiêu trong lúc farm (phương án A: xoay vòng đơn giản) ---
+  # Mỗi chu kỳ MONITOR tool nhấn ô kế tiếp trong slots; chiêu đang hồi thì
+  # cú tap vô hại, game tự bỏ qua. Chỉ nhấn khi khung hình đọc được, đang ở
+  # đúng map farm và auto đánh đang ON. Toạ độ 8 ô: coordinates.yaml.
+  skills:
+    enabled: false
+    # Các ô chiêu nhấn xoay vòng (số 1-8 trên vòng chiêu, theo thứ tự khai báo)
+    slots: []
+    # Giãn cách tối thiểu giữa 2 lần nhấn chiêu (giây). Sàn THỰC TẾ do
+    # safety.action_delay (0.5-2s) + max_actions_per_minute quyết định —
+    # đặt nhỏ hơn cũng không nhanh hơn được
+    cast_interval: 1.0
+    # Ô vật phẩm hồi máu (1-8); 0 = không dùng. Ô này KHÔNG xoay vòng —
+    # chỉ nhấn khi HP tụt dưới ngưỡng dưới đây
+    heal_slot: 8
+    # Dùng vật phẩm hồi máu khi HP dưới ngưỡng này (%) — nên đặt CAO hơn
+    # hp_retreat_percent của acc: thuốc cứu trước, hết cứu nổi mới rút về
+    heal_hp_percent: 40
+    # Giãn cách tối thiểu giữa 2 lần dùng thuốc (giây) — thuốc có hồi riêng
+    heal_cooldown: 30.0
 
 # Task đăng nhập (R1) — flow: title -> SIGN IN (3CID) -> form -> chọn nhân vật -> vào game
 login:

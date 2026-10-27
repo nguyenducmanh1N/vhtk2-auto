@@ -31,6 +31,7 @@ PATCHES: dict[str, Image] = {
     "common/disconnected": make_patch(3),
     "common/btn_reconnect": make_patch(4),
     "login/title": make_patch(5),
+    "common/dialog_bullet": make_patch(6),
 }
 
 
@@ -198,3 +199,19 @@ def test_partial_template_store_is_tolerated(tmp_path: Path) -> None:
 
     assert recovery.check() is RecoveryOutcome.OK
     assert device.taps == []
+
+
+def test_npc_dialog_declined_via_bottom_option(tmp_path: Path) -> None:
+    """Hộp thoại NPC cốt truyện: 2 lựa chọn ◆ — recovery phải tap lựa chọn
+    DƯỚI CÙNG (quy ước của game: từ chối/rời đi), không tap lựa chọn trên."""
+    dialog = canvas_with(
+        ("common/dialog_bullet", 60, 100),  # lựa chọn trên (có thể là NHẬN quest)
+        ("common/dialog_bullet", 60, 200),  # lựa chọn dưới = từ chối
+    )
+    recovery, device, _ = make_recovery(tmp_path, [dialog, clean_frame()])
+
+    outcome = recovery.check()
+
+    assert outcome is RecoveryOutcome.RECOVERED
+    assert len(device.taps) == 1
+    assert device.taps[0][1] > 200  # tâm patch dưới (y=200..220)

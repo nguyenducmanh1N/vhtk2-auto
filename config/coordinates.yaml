@@ -11,3 +11,52 @@ login:
     - [828, 120]
     - [828, 210]
     - [828, 300]
+
+farm:
+  # Điểm tap mở màn bản đồ: ảnh minimap góc phải trên HUD.
+  # Tap SÂU vào giữa ảnh minimap — mép trái của nó sát dòng nhiệm vụ,
+  # trượt trúng là game tự tìm đường làm nhiệm vụ kéo nhân vật đi map khác
+  minimap: [925, 125]
+  # ROI thanh HP trên HUD (x, y, w, h) — đo trên AVD 960x540, máu đầy phủ kín
+  hp_bar_rect: [72, 26, 70, 8]
+  # ROI dòng toạ độ hiện tại trên HUD (vd "180/175") — dùng pixel-diff
+  hud_coords_rect: [835, 38, 70, 18]
+  # Vùng ảnh bản đồ trên màn bản đồ (đo trên AVD 26/10) — spot 0/0 trong
+  # account = tap vào tâm vùng này (trung tâm map đích)
+  map_image_rect: [395, 105, 385, 315]
+  # Tâm 8 ô trên vòng chiêu HUD (ô 1-8, đo trên AVD 27/10 — ô to giữa vòng
+  # là nút đánh thường của game, KHÔNG nằm trong danh sách này).
+  # Ô 8 = ô trên cùng (chỗ gắn vật phẩm/ngựa). [0, 0] = chưa đo — farm task
+  # từ chối bật auto chiêu với ô đó. Đo lại bằng GUI tab "Chiêu thức".
+  skill_slots:
+    -   - 770
+        - 458
+    -   - 795
+        - 378
+    -   - 860
+        - 346
+    -   - 920
+        - 332
+    -   - 693
+        - 457
+    -   - 720
+        - 371
+    -   - 754
+        - 333
+    -   - 805
+        - 293
+sell:
+  # Lưới ô túi trên màn cửa hàng (đo bằng mask màu highlight trên AVD 2026-10-26)
+  bag_grid:
+    origin: [526, 90]
+    cell: [50, 48]
+    pitch: [57, 56]
+    cols: 5
+    rows: 6
+  # Vùng hiển thị tiền (vàng/bạc/đồng) dưới túi — so trước/sau khi bán
+  money_rect: [620, 426, 210, 22]
+  # Nút chuyển trang túi (trang 1/2/3) bên phải lưới
+  page_buttons:
+    - [823, 157]
+    - [823, 270]
+    - [823, 375]

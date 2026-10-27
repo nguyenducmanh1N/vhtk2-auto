@@ -45,7 +45,13 @@ def main() -> int:
     vision = Vision(store, device.screenshot, settings.vision, settings.templates.match_threshold)
     notifier = NullNotifier()
     safety = Safety(settings.safety, notifier, settings.logging.dir / "dry_run")
-    recovery = Recovery(device, vision, notifier, settings.logging.dir / "unknown")
+    recovery = Recovery(
+        device,
+        vision,
+        notifier,
+        settings.logging.dir / "unknown",
+        app_in_foreground=lambda: device.app_in_foreground(settings.game.package_name),
+    )
     ctx = TaskContext(
         device=device,
         vision=vision,

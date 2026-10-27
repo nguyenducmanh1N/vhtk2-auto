@@ -17,7 +17,14 @@ from typing import Any
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
 
-from vhtk.config import AccountConfig, ConfigError, SafetySettings, Settings
+from vhtk.config import (
+    AccountConfig,
+    ConfigError,
+    Coordinates,
+    FarmSkillSettings,
+    SafetySettings,
+    Settings,
+)
 
 _yaml = YAML()
 _yaml.preserve_quotes = True
@@ -88,6 +95,46 @@ def write_settings_safety(settings_path: Path, safety: SafetySettings) -> None:
     except Exception as exc:
         raise ConfigError(f"merged settings would be invalid: {exc}") from exc
     _dump(base, settings_path)
+
+
+def write_settings_farm_skills(settings_path: Path, skills: FarmSkillSettings) -> None:
+    """Update ONLY ``farm.skills`` of settings.yaml, keeping comments.
+
+    Raises:
+        ConfigError: if the merged document fails schema validation.
+    """
+    base = _load_round_trip(settings_path)
+    if "farm" not in base or not isinstance(base["farm"], CommentedMap):
+        base["farm"] = CommentedMap()
+    if "skills" not in base["farm"] or not isinstance(base["farm"]["skills"], CommentedMap):
+        base["farm"]["skills"] = CommentedMap()
+    _apply(base["farm"]["skills"], skills.model_dump(mode="json"))
+    plain = _yaml.load(io.StringIO(_dump_to_str(base)))
+    try:
+        Settings.model_validate(plain)
+    except Exception as exc:
+        raise ConfigError(f"merged settings would be invalid: {exc}") from exc
+    _dump(base, settings_path)
+
+
+def write_coordinates_skill_slots(
+    coords_path: Path, skill_slots: list[tuple[int, int]]
+) -> None:
+    """Update ONLY ``farm.skill_slots`` of coordinates.yaml, keeping comments.
+
+    Raises:
+        ConfigError: if the merged document fails schema validation.
+    """
+    base = _load_round_trip(coords_path)
+    if "farm" not in base or not isinstance(base["farm"], CommentedMap):
+        base["farm"] = CommentedMap()
+    base["farm"]["skill_slots"] = [list(p) for p in skill_slots]
+    plain = _yaml.load(io.StringIO(_dump_to_str(base)))
+    try:
+        Coordinates.model_validate(plain)
+    except Exception as exc:
+        raise ConfigError(f"merged coordinates would be invalid: {exc}") from exc
+    _dump(base, coords_path)
 
 
 def _dump_to_str(data: CommentedMap) -> str:

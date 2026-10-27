@@ -1,0 +1,91 @@
+#!/bin/bash
+# Điều khiển nhanh VHTK2 Auto Tool (máy dev Mac):
+#
+#   ./vhtk start     # chạy nền: runner farm + app quản lý (GUI)
+#   ./vhtk restart   # dừng sạch rồi chạy lại
+#   ./vhtk stop      # dừng sạch mọi thứ (kill-switch cho runner)
+#   ./vhtk status    # xem cái gì đang chạy
+#
+# Tuỳ chọn: ./vhtk start config/accounts/farm01.yaml  (mặc định dev.yaml)
+# Log: logs/runner.out, logs/ui.out, logs/vhtk.jsonl
+set -u
+cd "$(dirname "$0")"
+PY=".venv/bin/python"
+ACCOUNT="${2:-config/accounts/dev.yaml}"
+mkdir -p logs
+
+if [ ! -x "$PY" ]; then
+  echo "LOI: chua co virtualenv .venv — tao bang: python3 -m venv .venv && .venv/bin/pip install -e ."
+  exit 1
+fi
+
+runner_pids() { pgrep -f "tools/run_farm.py" | tr '\n' ' ' | sed 's/ $//' || true; }
+ui_pids() { pgrep -f "vhtk.ui" | tr '\n' ' ' | sed 's/ $//' || true; }
+
+status() {
+  local r u
+  r=$(runner_pids); u=$(ui_pids)
+  if [ -n "$r" ]; then echo "runner: ĐANG CHẠY (pid $r)"; else echo "runner: dừng"; fi
+  if [ -n "$u" ]; then echo "gui:    ĐANG CHẠY (pid $u) -> http://127.0.0.1:8787"; else echo "gui:    dừng"; fi
+}
+
+start() {
+  rm -f STOP
+  if [ -n "$(runner_pids)" ]; then
+    # mỗi thiết bị CHỈ một runner — 2 bản giành nhau màn hình là loạn thao tác
+    echo "runner đã chạy rồi (pid $(runner_pids)) — dùng './vhtk restart' nếu muốn chạy lại"
+  else
+    nohup "$PY" tools/run_farm.py --account "$ACCOUNT" >> logs/runner.out 2>&1 &
+    echo "runner: đã chạy nền (pid $!, account $ACCOUNT, log logs/runner.out)"
+  fi
+  if [ -n "$(ui_pids)" ]; then
+    echo "gui:    đã chạy sẵn -> http://127.0.0.1:8787"
+  else
+    nohup "$PY" -m vhtk.ui --browser >> logs/ui.out 2>&1 &
+    echo "gui:    đã chạy nền (pid $!) -> http://127.0.0.1:8787"
+  fi
+}
+
+stop() {
+  if [ -n "$(runner_pids)" ]; then
+    touch STOP
+    echo "đã tạo kill-switch STOP — chờ runner dừng sạch ở điểm an toàn (tối đa 60s)..."
+    for _ in $(seq 1 60); do
+      [ -z "$(runner_pids)" ] && break
+      sleep 1
+    done
+    if [ -n "$(runner_pids)" ]; then
+      echo "runner không tự dừng, buộc dừng (kill)"
+      pkill -f "tools/run_farm.py" || true
+      wait_gone runner_pids
+    fi
+    rm -f STOP
+    echo "runner: đã dừng"
+  else
+    echo "runner: không chạy"
+  fi
+  if [ -n "$(ui_pids)" ]; then
+    pkill -f "vhtk.ui" || true
+    wait_gone ui_pids   # chờ thoát hẳn — restart ngay sau đó mới không bị race
+    echo "gui:    đã dừng"
+  else
+    echo "gui:    không chạy"
+  fi
+}
+
+# chờ một nhóm tiến trình thoát hẳn (tối đa 10s)
+wait_gone() {
+  for _ in $(seq 1 20); do
+    [ -z "$("$1")" ] && return 0
+    sleep 0.5
+  done
+  return 0
+}
+
+case "${1:-status}" in
+  start)   start ;;
+  stop)    stop ;;
+  restart) stop; echo "---"; start ;;
+  status)  status ;;
+  *) echo "Cách dùng: ./vhtk {start|restart|stop|status} [account.yaml]"; exit 1 ;;
+esac

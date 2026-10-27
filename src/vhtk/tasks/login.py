@@ -36,6 +36,9 @@ log = structlog.get_logger(__name__)
 
 # Tên template của flow login (UI contract với bộ template đang dùng)
 TPL_BTN_ENTER = "login/btn_enter"  # nút "Đăng nhập" ở màn title
+# hộp "Không lấy được cấu hình cập nhật. Thử lại?" khi mạng yếu lúc khởi động
+# — bấm "Thử lại" tới khi qua được (quan sát 26/10 khi mạng chập chờn)
+TPL_BTN_RETRY_CONFIG = "login/btn_retry_config"
 TPL_SERVER_ROW = "login/server_row"  # dòng server đã chọn đúng (khớp = đúng server)
 TPL_SIGNIN_TITLE = "login/signin_title"  # dialog "SIGN IN" của SDK
 TPL_BTN_3CID = "login/btn_3cid"
@@ -164,15 +167,24 @@ class LoginTask(BaseTask):
         # đã văng về launcher trong lúc chờ
         self._ensure_foreground()
         cfg = self.ctx.settings.login
-        hit = self.ctx.vision.wait_any(
-            [TPL_BTN_ENTER, *_LANDING_STATES], timeout=cfg.boot_timeout
-        )
-        if hit is None:
-            raise StateTimeout("no known login screen appeared after app start")
-        found, _ = hit
-        if found == TPL_BTN_ENTER:
-            return S_CHECK_SERVER
-        return self._route_landing(found)
+        watch = [TPL_BTN_ENTER, *_LANDING_STATES]
+        if TPL_BTN_RETRY_CONFIG in self.ctx.vision.store:
+            watch.append(TPL_BTN_RETRY_CONFIG)
+        # hộp "cấu hình cập nhật" có thể hiện lại nhiều lần khi mạng yếu —
+        # bấm Thử lại tối đa vài lần trong cùng một lượt chờ
+        for _ in range(3):
+            hit = self.ctx.vision.wait_any(watch, timeout=cfg.boot_timeout)
+            if hit is None:
+                raise StateTimeout("no known login screen appeared after app start")
+            found, match = hit
+            if found == TPL_BTN_RETRY_CONFIG:
+                log.warning("config-update dialog showing, tapping retry")
+                self.ctx.device.tap(*match.center)
+                continue
+            if found == TPL_BTN_ENTER:
+                return S_CHECK_SERVER
+            return self._route_landing(found)
+        raise StateTimeout("config-update dialog keeps reappearing (network down?)")
 
     def _check_server(self) -> str:
         """Verify the pre-selected server row matches the account's server.
@@ -202,6 +214,12 @@ class LoginTask(BaseTask):
         return self._route_landing(hit[0])
 
     def _sign_in_dialog(self) -> str:
+        # template signin_title ("SIGN IN") match được cả header
+        # "SIGN IN WITH 3CID" của form — mất phiên SDK là game rơi THẲNG về
+        # form, lúc đó không có nút 3CID nào để bấm (lỗi thực tế 26/10)
+        if self.ctx.vision.find(TPL_FORM_TITLE) is not None:
+            log.info("3CID form already open, skipping method chooser")
+            return S_FILL_FORM
         self._tap_template(TPL_BTN_3CID, timeout=10.0)
         if self.ctx.vision.wait_for(TPL_FORM_TITLE, timeout=15.0) is None:
             raise StateTimeout("3CID form did not open")
@@ -215,12 +233,18 @@ class LoginTask(BaseTask):
             return S_SUBMIT
         cfg = self.ctx.settings.login
         coords = self._coords.login
+        # landscape + IME ảo: tap vào ô là Android mở editor TOÀN MÀN HÌNH
+        # che hết form (lỗi thực tế 26/10) — press_back sau mỗi lần gõ để
+        # đóng editor/bàn phím trước khi đụng phần tử kế tiếp. Trên AVD dev
+        # đã tắt IME ảo (show_ime_with_hard_keyboard=0), back thừa vô hại.
         self._tap_fallback_coords("username_field", coords.username_field)
         self.ctx.device.press_delete(cfg.clear_chars)
         self.ctx.device.input_text(creds.username)
+        self.ctx.device.press_back()
         self._tap_fallback_coords("password_field", coords.password_field)
         self.ctx.device.press_delete(cfg.clear_chars)
         self.ctx.device.input_text(creds.password)
+        self.ctx.device.press_back()
         return S_SUBMIT
 
     def _submit(self) -> str:

@@ -1,0 +1,68 @@
+# Metadata riêng từng template (ngưỡng, ROI, grayscale) — thiếu entry thì dùng
+# mặc định toàn cục trong settings.yaml (match_threshold, grayscale_match).
+#
+# Nhóm chữ-đè-lên-thế-giới (tên map HUD, nhãn Đứng/Ngồi, dòng "Đi:"): nền sau chữ
+# thay đổi liên tục khi nhân vật di chuyển nên score dao động (đo thực tế trên AVD
+# 2026-10-26: 0.83–1.00) -> hạ ngưỡng riêng + khoá ROI vào vị trí cố định của chúng
+# để khỏi match nhầm chỗ khác.
+
+# ROI của hud_name_tuyen_chau phải BÓ SÁT: tên map luôn bắt đầu tại x=843;
+# "Tuyền Châu" là CHUỖI CON của "Tây/Bắc Tuyền Châu" (lệch phải ~25px) —
+# ROI rộng từng làm tool tưởng đã về thành khi đang ở map Tây Tuyền Châu
+map/hud_name_tuyen_chau:
+  threshold: 0.70
+  roi: [836, 12, 72, 32]
+map/hud_name_long_tuyen_thon:
+  threshold: 0.70
+  roi: [800, 10, 160, 40]
+map/btn_stand:
+  threshold: 0.70
+  roi: [0, 460, 70, 80]
+map/btn_sit:
+  threshold: 0.70
+  roi: [0, 460, 70, 80]
+map/travel_indicator:
+  threshold: 0.70
+  roi: [320, 505, 320, 35]
+
+# Nút Auto tròn trên HUD (chỉ dấu "đã vào thế giới" của login + farm): crop chứa
+# cả nền thế giới xung quanh nên score tụt theo map (đo: 0.82 ở Long Tuyền Thôn)
+login/hud_auto_btn:
+  threshold: 0.70
+  roi: [780, 95, 110, 110]
+
+# Nút auto trên HUD: vị trí cố định (đo AVD: bbox ~(808,118,28,28)) — khoá ROI
+# để locate so điểm on/off không bị nhiễu bởi chỗ khác. BẮT BUỘC match MÀU:
+# hai trạng thái chỉ khác tông màu, match xám chênh ~0.03 (hay mập mờ dưới biên
+# auto_state_margin), match màu chênh ~0.04–0.05 ổn định (đo trên 5 frame AVD).
+map/btn_auto_on:
+  roi: [790, 100, 70, 70]
+  grayscale: false
+map/btn_auto_off:
+  roi: [790, 100, 70, 70]
+  grayscale: false
+map/hud_name_bac_tuyen_chau:
+  threshold: 0.70
+  roi: [800, 10, 160, 40]
+
+# display_name: tên map in-game để GUI hiển thị trong ô chọn "Map farm"
+# (map sẵn sàng = có đủ cặp row_<slug> + hud_name_<slug>)
+map/row_tuyen_chau:
+  display_name: 'Tuyền Châu'
+map/row_long_tuyen_thon:
+  display_name: 'Long Tuyền Thôn'
+map/row_bac_tuyen_chau:
+  display_name: 'Bắc Tuyền Châu'
+
+# Nút đóng popup: X kim cương XANH (túi/cửa sổ thường) phải match MÀU để không
+# lẫn với X kim cương ĐỎ của màn bản đồ (map/btn_close) — hình dạng giống hệt,
+# chỉ khác màu; lẫn nhau là recovery đóng nhầm bản đồ đang điều hướng
+common/btn_close:
+  grayscale: false
+  roi: [905, 48, 55, 45]
+common/btn_x:
+  grayscale: false
+
+# ROI cho btn_close: X của cửa sổ lớn (túi/Hành trang...) nằm ở (921,58);
+# nút X màn bản đồ ở (852,38) trông gần giống — KHÔNG được để recovery
+# match nó rồi đóng bản đồ giữa lúc điều hướng (sự cố 2026-10-26 12:16)

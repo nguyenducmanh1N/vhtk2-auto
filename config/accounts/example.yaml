@@ -26,7 +26,21 @@ login:
 
 # Tham số farm cho tài khoản này
 farm:
-  # Tên map cày (đúng như hiển thị trong game, để OCR đối chiếu)
+  # Tên map cày, đúng như hiển thị trong game. Tên này sinh tên template cần có:
+  # map/row_<slug> (dòng trong tab "Tìm map") và map/hud_name_<slug> (tên map trên
+  # HUD) — vd "Long Tuyền Thôn" -> row_long_tuyen_thon, hud_name_long_tuyen_thon
   map: ''
+  # Điểm farm: PIXEL trên ẢNH bản đồ của màn bản đồ (960x540) — tool tap vào đó,
+  # game tự tìm đường (kể cả xuyên map). Chọn điểm bằng mắt từ ảnh chụp màn bản đồ
+  # (vùng ảnh bản đồ khoảng x 350-823, y 143-390). [0, 0] = chưa cấu hình
+  spot: [0, 0]
+  # HP dưới ngưỡng này (%) liên tiếp nhiều chu kỳ -> tín hiệu HP_LOW, rút về nghỉ
+  hp_retreat_percent: 30
+  # Nghỉ tới khi HP hồi >= ngưỡng này (%) mới quay lại farm (phải > hp_retreat_percent)
+  hp_resume_percent: 90
+  # Map + điểm an toàn để rút về khi HP thấp (thường là trong thành);
+  # retreat_spot cùng hệ quy chiếu với spot (pixel trên ảnh bản đồ)
+  retreat_map: ''
+  retreat_spot: [0, 0]
   # Ngưỡng vàng: vượt ngưỡng thì kích hoạt chuyển vàng về acc main
   gold_transfer_threshold: 1000000

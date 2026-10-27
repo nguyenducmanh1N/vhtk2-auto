@@ -112,6 +112,9 @@ class FakeDevice:
     def press_delete(self, count: int) -> None:
         self.deletes.append(count)
 
+    def press_back(self) -> None:
+        pass  # đóng IME/editor sau khi gõ — không ảnh hưởng thế giới giả
+
 
 class OkRecovery:
     def check(self) -> RecoveryOutcome:
