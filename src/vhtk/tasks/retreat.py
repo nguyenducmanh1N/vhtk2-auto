@@ -227,6 +227,16 @@ class RetreatTask(BaseTask):
             if hp is not None and hp >= self._farm.hp_resume_percent:
                 log.info("rested, HP recovered", hp=round(hp, 1))
                 return DONE
+            # nhân vật hay bị DỰNG DẬY giữa chừng ở thành đông (quest tân thủ
+            # auto-route, người chơi khác tác động — quan sát 27/10: ngồi xong
+            # vài giây lại đứng, hồi máu rù rì tới hết rest_timeout) — thấy
+            # nút "Ngồi" hiện lại nghĩa là đang đứng: ngồi lại ngay
+            if self.ctx.vision.find(TPL_BTN_SIT, screenshot=frame) is not None:
+                log.warning("stood up while resting, sitting down again")
+                try:
+                    self._nav.ensure_sitting()
+                except VerifyFailed:
+                    log.warning("could not sit down, resting standing up")
             # 2 chu kỳ liên tiếp không thấy tên thành (1 khung có thể bị che)
             if self._nav.in_map(self._farm.retreat_map, frame=frame):
                 away_streak = 0

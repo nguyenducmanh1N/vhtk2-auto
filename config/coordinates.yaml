@@ -45,6 +45,7 @@ farm:
         - 333
     -   - 805
         - 293
+  bag_full_icon_rect: [871, 159, 40, 40]
 sell:
   # Lưới ô túi trên màn cửa hàng (đo bằng mask màu highlight trên AVD 2026-10-26)
   bag_grid:

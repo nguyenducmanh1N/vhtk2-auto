@@ -33,7 +33,7 @@ from vhtk.core.errors import (
     VerifyFailed,
 )
 from vhtk.core.fsm import ABORT, DONE, BaseTask, State, TaskContext
-from vhtk.core.vision import Image, bar_fill_percent
+from vhtk.core.vision import Image, bar_fill_percent, color_ratio
 from vhtk.tasks.navigate import (
     TPL_AUTO_OFF,
     TPL_AUTO_ON,
@@ -51,6 +51,8 @@ log = structlog.get_logger(__name__)
 
 # HUD đã vào thế giới — dùng chung template với login
 TPL_HUD = "login/hud_auto_btn"
+# Icon Túi đồ chuyển vòng đỏ "Đầy" khi hành trang quá nặng (chụp AVD 27/10)
+TPL_BAG_FULL = "common/bag_full_icon"
 
 # State names
 S_VERIFY_HUD = "VERIFY_HUD"
@@ -67,7 +69,7 @@ class FarmSignal(Enum):
     """What MONITOR observed; consumed by the runner, never handled here."""
 
     HP_LOW = "hp_low"
-    BAG_FULL = "bag_full"  # chưa phát — cần template túi (R3b)
+    BAG_FULL = "bag_full"  # hành trang quá nặng — game khoá võ công, phải về bán
     GOLD_THRESHOLD = "gold_threshold"  # chưa phát — cần OCR vàng (W3)
     EQUIP_BROKEN = "equip_broken"  # chưa phát — cần template hỏng đồ (R5)
 
@@ -82,6 +84,9 @@ class MonitorReading:
     # nhân vật có dịch chuyển so với chu kỳ trước không (pixel-diff vùng toạ
     # độ HUD); None = chu kỳ đầu / không đọc được
     moving: bool | None = None
+    # icon Túi đồ đang báo "Đầy"? None = không kiểm được chu kỳ này (HUD
+    # không đọc được / chưa cấu hình rect / thiếu template)
+    bag_full: bool | None = None
 
 
 class MonitorAction(Enum):
@@ -92,6 +97,7 @@ class MonitorAction(Enum):
     WAKE_AUTO = "wake_auto"  # nút auto ON nhưng nhân vật đứng ngây -> tắt/bật lại
     WRONG_MAP = "wrong_map"
     SIGNAL_HP_LOW = "signal_hp_low"
+    SIGNAL_BAG_FULL = "signal_bag_full"
     LOST = "lost"  # nhiều chu kỳ liền không đọc được màn hình -> RECOVER
 
 
@@ -104,17 +110,19 @@ class MonitorPolicy:
 
     def __init__(self, hp_retreat_percent: int, hp_emergency_percent: int,
                  hp_low_cycles: int, lost_cycles: int, auto_reenable_limit: int,
-                 idle_cycles: int = 4) -> None:
+                 idle_cycles: int = 4, bag_full_cycles: int = 2) -> None:
         self._hp_threshold = hp_retreat_percent
         self._hp_emergency = hp_emergency_percent
         self._hp_low_cycles = hp_low_cycles
         self._lost_cycles = lost_cycles
         self._reenable_limit = auto_reenable_limit
         self._idle_cycles = idle_cycles
+        self._bag_cycles = bag_full_cycles
         self._low_streak = 0
         self._lost_streak = 0
         self._reenabled = 0
         self._idle_streak = 0
+        self._bag_streak = 0
 
     def evaluate(self, reading: MonitorReading) -> MonitorAction:
         """Decide the next action from one cycle's readings.
@@ -140,6 +148,15 @@ class MonitorPolicy:
                 return MonitorAction.SIGNAL_HP_LOW
         else:
             self._low_streak = 0
+
+        # túi đầy: dưới HP (an toàn nhân vật trước), trên sai-map — túi đã
+        # đầy thì quay lại đúng map farm cũng vô ích, phải về bán trước
+        if reading.bag_full is True:
+            self._bag_streak += 1
+            if self._bag_streak >= self._bag_cycles:
+                return MonitorAction.SIGNAL_BAG_FULL
+        elif reading.bag_full is False:
+            self._bag_streak = 0
 
         if reading.in_farm_map is False:
             return MonitorAction.WRONG_MAP
@@ -225,6 +242,16 @@ class FarmTask(BaseTask):
         self._nav = Navigator(ctx, coords.farm, ctx.settings.farm)
         self._hp_rect = coords.farm.hp_bar_rect
         self._skill_points = coords.farm.skill_slots
+        self._bag_rect = coords.farm.bag_full_icon_rect
+        self._bag_check_ready = (
+            self._bag_rect is not None and TPL_BAG_FULL in ctx.vision.store
+        )
+        if not self._bag_check_ready:
+            log.warning(
+                "bag-full detection disabled",
+                rect_configured=self._bag_rect is not None,
+                template_present=TPL_BAG_FULL in ctx.vision.store,
+            )
         self._nav_attempts = 0
         self.signal: FarmSignal | None = None
         super().__init__(ctx)
@@ -322,6 +349,12 @@ class FarmTask(BaseTask):
         if hit[0] == TPL_BTN_CONFIRM_COORDS:
             self._nav.close_map()
         frame = self.ctx.vision.capture_screen()
+        # túi đã đầy từ trước khi xuất phát: khỏi hành quân — phát tín hiệu
+        # ngay cho runner đưa đi bán, đỡ một chuyến đi-về vô ích
+        if self._bag_full(frame) is True:
+            log.warning("bag already full before farming, signalling sell first")
+            self.signal = FarmSignal.BAG_FULL
+            return S_DISABLE_AUTO
         hp = self._hp(frame)
         if hp is not None and hp < self._farm.hp_retreat_percent:
             # vừa hồi sinh / vừa thoát trận với máu cạn — hành quân lúc này là
@@ -440,6 +473,7 @@ class FarmTask(BaseTask):
             cfg.lost_cycles,
             cfg.auto_reenable_limit,
             idle_cycles=cfg.monitor_idle_cycles,
+            bag_full_cycles=cfg.bag_full_cycles,
         )
         caster = SkillCaster(cfg.skills)
         prev_crop: Image | None = None
@@ -466,6 +500,10 @@ class FarmTask(BaseTask):
             if action is MonitorAction.SIGNAL_HP_LOW:
                 self.signal = FarmSignal.HP_LOW
                 log.warning("HP low, signalling retreat", hp=reading.hp_percent)
+                return S_DISABLE_AUTO
+            if action is MonitorAction.SIGNAL_BAG_FULL:
+                self.signal = FarmSignal.BAG_FULL
+                log.warning("bag full, signalling sell trip")
                 return S_DISABLE_AUTO
             if action is MonitorAction.WRONG_MAP:
                 log.warning("left the farm map, re-routing")
@@ -537,6 +575,23 @@ class FarmTask(BaseTask):
         except Exception:  # khung hỏng/đen chỉ là "không đọc được"
             return None
 
+    def _bag_full(self, frame: Image) -> bool | None:
+        """Is the HUD bag icon showing the red "Đầy" state? ``None`` = can't tell.
+
+        Xác nhận kép: template icon khớp VÀ tỉ lệ pixel đỏ trong ô icon vượt
+        ngưỡng — icon thường cùng khối tròn nên chỉ một vế là không đủ tin
+        (template 0.806 trên frame âm; màu đỏ xuất hiện ở màn login/shop).
+        """
+        if not self._bag_check_ready or self._bag_rect is None:
+            return None
+        cfg = self.ctx.settings.farm
+        try:
+            tpl_hit = self.ctx.vision.find(TPL_BAG_FULL, screenshot=frame) is not None
+            red = color_ratio(frame, self._bag_rect, cfg.bag_full_color)
+        except Exception:
+            return None
+        return tpl_hit and red >= cfg.bag_full_min_red_ratio
+
     def _read(self, frame: Image) -> MonitorReading:
         """Collect one cycle's observations from a single frame."""
         hp = self._hp(frame)
@@ -551,4 +606,9 @@ class FarmTask(BaseTask):
         # từng gây một lần rút về oan (2026-10-26)
         if hp is not None and auto_on is None and in_map is not True:
             hp = None
-        return MonitorReading(hp_percent=hp, auto_on=auto_on, in_farm_map=in_map)
+        # túi đầy chỉ kiểm khi khung hình đúng là HUD (có mỏ neo) — màn
+        # login/shop cũng có mảng đỏ trùng vị trí icon
+        bag = self._bag_full(frame) if auto_on is not None else None
+        return MonitorReading(
+            hp_percent=hp, auto_on=auto_on, in_farm_map=in_map, bag_full=bag
+        )

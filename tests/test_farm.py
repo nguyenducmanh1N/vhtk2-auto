@@ -251,8 +251,10 @@ def make_policy(**kw: int) -> MonitorPolicy:
 
 
 def reading(hp: float | None = 100.0, auto: bool | None = True,
-            in_map: bool | None = True, moving: bool | None = None) -> MonitorReading:
-    return MonitorReading(hp_percent=hp, auto_on=auto, in_farm_map=in_map, moving=moving)
+            in_map: bool | None = True, moving: bool | None = None,
+            bag_full: bool | None = None) -> MonitorReading:
+    return MonitorReading(hp_percent=hp, auto_on=auto, in_farm_map=in_map,
+                          moving=moving, bag_full=bag_full)
 
 
 def test_policy_hp_low_needs_consecutive_cycles() -> None:
@@ -302,6 +304,34 @@ def test_policy_hp_low_wins_over_auto_and_map() -> None:
 def test_policy_wrong_map() -> None:
     p = make_policy()
     assert p.evaluate(reading(in_map=False)) is MonitorAction.WRONG_MAP
+
+
+def test_policy_bag_full_needs_consecutive_cycles() -> None:
+    p = make_policy(bag_full_cycles=2)
+    assert p.evaluate(reading(bag_full=True)) is MonitorAction.KEEP_FARMING
+    assert p.evaluate(reading(bag_full=True)) is MonitorAction.SIGNAL_BAG_FULL
+
+
+def test_policy_bag_full_streak_resets_on_not_full() -> None:
+    p = make_policy(bag_full_cycles=2)
+    p.evaluate(reading(bag_full=True))
+    assert p.evaluate(reading(bag_full=False)) is MonitorAction.KEEP_FARMING
+    # một chu kỳ không kiểm được (None) không reset cũng không tăng streak
+    assert p.evaluate(reading(bag_full=True)) is MonitorAction.KEEP_FARMING
+    assert p.evaluate(reading(bag_full=None)) is MonitorAction.KEEP_FARMING
+    assert p.evaluate(reading(bag_full=True)) is MonitorAction.SIGNAL_BAG_FULL
+
+
+def test_policy_hp_low_wins_over_bag_full() -> None:
+    """An toàn nhân vật trước: máu thấp thắng túi đầy."""
+    p = make_policy(hp_low_cycles=1, bag_full_cycles=1)
+    assert p.evaluate(reading(hp=5, bag_full=True)) is MonitorAction.SIGNAL_HP_LOW
+
+
+def test_policy_bag_full_wins_over_wrong_map() -> None:
+    """Túi đã đầy thì quay lại đúng map farm cũng vô ích — về bán trước."""
+    p = make_policy(bag_full_cycles=1)
+    assert p.evaluate(reading(in_map=False, bag_full=True)) is MonitorAction.SIGNAL_BAG_FULL
 
 
 def test_policy_wakes_dormant_auto_after_idle_cycles() -> None:
@@ -618,6 +648,40 @@ def test_rest_detects_being_pulled_away(tmp_path: Path) -> None:
     task = RetreatTask(make_ctx(tmp_path, vision, WorldDevice()))
     with pytest.raises(TaskError, match="pulled out"):
         task._rest()
+
+
+def test_rest_resits_when_stood_up(tmp_path: Path) -> None:
+    """Nhân vật bị dựng dậy giữa lúc nghỉ (quest auto-route, người chơi khác
+    tác động — quan sát 27/10) -> REST phải phát hiện nút "Ngồi" hiện lại và
+    ngồi xuống lại thay vì đứng hồi máu rù rì tới hết rest_timeout."""
+    from vhtk.core.fsm import DONE
+
+    vision = WorldVision(
+        present={TPL_BTN_STAND, "map/hud_name_tuyen_chau"},
+        frames=[frame_with_hp(0.5), frame_with_hp(0.5), frame_with_hp(1.0)],
+    )
+    calls = {"n": 0}
+    orig_capture = vision.capture_screen
+
+    def capture() -> np.ndarray:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            # giữa chừng bị dựng dậy: nút Ngồi hiện lại
+            vision.present.discard(TPL_BTN_STAND)
+            vision.present.add(TPL_BTN_SIT)
+        return orig_capture()
+
+    vision.capture_screen = capture  # type: ignore[method-assign]
+
+    def on_tap(x: int, y: int) -> None:
+        if TPL_BTN_SIT in vision.present:
+            vision.present.discard(TPL_BTN_SIT)
+            vision.present.add(TPL_BTN_STAND)
+
+    device = WorldDevice(on_tap=on_tap)
+    task = RetreatTask(make_ctx(tmp_path, vision, device))
+    assert task._rest() == DONE
+    assert len(device.taps) == 1  # đúng một cú tap: ngồi lại
 
 
 def test_retreat_full_cycle_rests_until_hp_recovers(tmp_path: Path) -> None:

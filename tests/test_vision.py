@@ -12,6 +12,8 @@ from vhtk.core.vision import (
     Match,
     TemplateStore,
     Vision,
+    VisionError,
+    color_ratio,
     detect_quality,
     non_max_suppression,
     parse_fraction,
@@ -238,3 +240,24 @@ def test_wait_any_and_wait_vanish(store_env: tuple[TemplateStore, np.ndarray]) -
     assert vis_other.find("common/patch") is None
     assert vis_other.wait_vanish("common/patch", timeout=0.5, interval=0.05) is True
     assert vis_other.wait_for("common/patch", timeout=0.2, interval=0.05) is None
+
+
+# ---------------------------------------------------------------------------
+# color_ratio — chỉ dấu HUD phân biệt bằng màu (icon Túi đồ "Đầy")
+# ---------------------------------------------------------------------------
+
+
+def test_color_ratio_counts_red_fraction() -> None:
+    red = SETTINGS.farm.bag_full_color
+    canvas = np.zeros((100, 100, 3), dtype=np.uint8)  # đen — ngoài dải màu
+    # tô đỏ thuần (BGR) đúng nửa trái của rect (20, 20, 40, 40)
+    canvas[20:60, 20:40] = (0, 0, 255)
+    ratio = color_ratio(canvas, (20, 20, 40, 40), red)
+    assert ratio == pytest.approx(0.5, abs=0.01)
+    assert color_ratio(canvas, (60, 60, 30, 30), red) == 0.0
+
+
+def test_color_ratio_rect_outside_frame_raises() -> None:
+    canvas = np.zeros((50, 50, 3), dtype=np.uint8)
+    with pytest.raises(VisionError):
+        color_ratio(canvas, (40, 40, 20, 20), SETTINGS.farm.bag_full_color)

@@ -3,8 +3,9 @@
 Minimal single-account loop (the real scheduler arrives in 5b):
 
     [login if needed] -> FARM -> signal?
-        HP_LOW  -> RETREAT -> FARM again
-        other   -> log it (bag/gold handled by later phases) -> FARM again
+        HP_LOW   -> RETREAT -> [SELL every N retreats] -> FARM again
+        BAG_FULL -> RETREAT -> SELL (always)           -> FARM again
+        other    -> log it (gold handled by later phases) -> FARM again
     RELOGIN_REQUIRED from any task -> LOGIN -> continue
     ABORTED -> stop (evidence already saved by the task)
     KILLED  -> stop cleanly (kill-switch)
@@ -93,6 +94,7 @@ def main() -> int:
 
     cycles = 0
     retreats = 0
+    bag_full_streak = 0
     try:
         # chạy FARM trước, không login trước: FarmTask tự xử lý màn hình bất kỳ
         # (kể cả bản đồ đang mở che HUD); nếu chưa đăng nhập, recovery sẽ báo
@@ -109,7 +111,19 @@ def main() -> int:
                 print(f"farm ended: {result.status.value} ({result.reason})")
                 return 1
             print(f"  farm signal: {farm.signal.value if farm.signal else 'none'}")
-            if farm.signal is FarmSignal.HP_LOW:
+            if farm.signal in (FarmSignal.HP_LOW, FarmSignal.BAG_FULL):
+                # túi đầy mà bán xong vẫn đầy (dry_run, hoặc blacklist giữ
+                # hết) thì farm sẽ phát BAG_FULL lại ngay — chặn vòng lặp
+                if farm.signal is FarmSignal.BAG_FULL:
+                    bag_full_streak += 1
+                    if bag_full_streak > 2:
+                        print(
+                            "bag still full after selling twice — items the"
+                            " blacklist keeps (or dry_run) need a human; stopping"
+                        )
+                        return 1
+                else:
+                    bag_full_streak = 0
                 retreat = run_with_relogin(ctx, RetreatTask(ctx))
                 if retreat.status is TaskStatus.KILLED:
                     print("kill-switch — stopped cleanly")
@@ -118,8 +132,12 @@ def main() -> int:
                     print(f"retreat ended: {retreat.status.value} ({retreat.reason})")
                     return 1
                 retreats += 1
-                # đang đứng trong thành — tranh thủ bán đồ rác mỗi N chu kỳ
-                if retreats % settings.sell.every_n_retreats == 0:
+                # túi đầy thì bán NGAY; máu thấp thì tranh thủ bán mỗi N chu kỳ
+                # (đằng nào cũng đang đứng trong thành)
+                if (
+                    farm.signal is FarmSignal.BAG_FULL
+                    or retreats % settings.sell.every_n_retreats == 0
+                ):
                     sell = SellTask(ctx)
                     sres = run_with_relogin(ctx, sell)
                     if sres.status is TaskStatus.KILLED:
@@ -134,6 +152,8 @@ def main() -> int:
                     # bán lỗi không chặn vòng farm — thử lại ở chu kỳ sau
                     if sres.status is not TaskStatus.SUCCESS:
                         print(f"  sell failed ({sres.reason}), continuing farm")
+            else:
+                bag_full_streak = 0
             if args.max_cycles and cycles >= args.max_cycles:
                 print(f"== done: {cycles} cycles ==")
                 return 0

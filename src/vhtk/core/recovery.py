@@ -14,9 +14,10 @@ are not present in the active store are silently skipped, so the module works
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Protocol, TypeAlias
+from typing import Protocol, TypeAlias
 
 import cv2
 import numpy as np

@@ -571,6 +571,13 @@ def bar_fill_percent(
     if x < 0 or y < 0 or w <= 0 or h <= 0 or x + w > fw or y + h > fh:
         raise VisionError(f"bar rect {rect} lies outside frame {fw}x{fh}")
     crop = frame[y : y + h, x : x + w]
+    mask = _hsv_mask(crop, color)
+    filled_columns = np.count_nonzero(mask.sum(axis=0) >= h * min_column_fraction)
+    return 100.0 * filled_columns / w
+
+
+def _hsv_mask(crop: Image, color: HSVRange) -> np.ndarray:
+    """Boolean mask of the pixels of a BGR crop inside one HSV range."""
     hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
     hue = hsv[:, :, 0].astype(int)
     sat = hsv[:, :, 1].astype(int)
@@ -578,15 +585,30 @@ def bar_fill_percent(
     h_lo, h_hi = color.h
     # hue là vòng tròn 0..179 — dải "quấn vòng" (h_lo > h_hi) hợp lệ
     h_ok = (hue >= h_lo) & (hue <= h_hi) if h_lo <= h_hi else (hue >= h_lo) | (hue <= h_hi)
-    mask = (
+    return (
         h_ok
         & (sat >= color.s[0])
         & (sat <= color.s[1])
         & (val >= color.v[0])
         & (val <= color.v[1])
     )
-    filled_columns = np.count_nonzero(mask.sum(axis=0) >= h * min_column_fraction)
-    return 100.0 * filled_columns / w
+
+
+def color_ratio(frame: Image, rect: Rect, color: HSVRange) -> float:
+    """Fraction (0..1) of the pixels of ``rect`` inside the HSV ``color`` range.
+
+    Dùng cho các chỉ dấu HUD chỉ khác nhau về MÀU (vd icon Túi đồ chuyển
+    vòng đỏ "Đầy" khi hành trang quá nặng) — template matching một mình
+    không tách nổi vì hình khối giống hệt.
+
+    Raises:
+        VisionError: if ``rect`` lies outside the frame.
+    """
+    x, y, w, h = rect
+    fh, fw = frame.shape[:2]
+    if x < 0 or y < 0 or w <= 0 or h <= 0 or x + w > fw or y + h > fh:
+        raise VisionError(f"color rect {rect} lies outside frame {fw}x{fh}")
+    return float(_hsv_mask(frame[y : y + h, x : x + w], color).mean())
 
 
 # ---------------------------------------------------------------------------

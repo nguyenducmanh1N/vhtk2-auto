@@ -259,6 +259,32 @@ Thêm: `TaskError` (gốc lỗi trong-task, FSM đưa về RECOVER) → `StateTi
   1 abort do thành đông người → đã vá đa-mỏ-neo); thử tắt auto tay → tool tự bật lại
   (REENABLE trong MONITOR — logic có test nhưng chưa thử tay trên AVD).
 
+### Phát hiện túi đầy → về thành bán (thêm 2026-10-27, phương án A)
+
+- **Vấn đề:** hành trang quá nặng thì game KHOÁ võ công ("Hành trang quá nặng,
+  không thể sử dụng võ công này!") — auto farm chết đứng, phải có người can thiệp.
+- **Tra cứu (27/10):** game có 3 kênh bán — NPC tạp hoá (rẻ, tức thì), bày bán
+  sạp (tự định giá, nhân vật phải đứng chờ người mua), giao dịch trực tiếp (R4).
+  Chốt phương án A: đồ rác bán NPC bằng SellTask có sẵn; bày bán sạp để sau.
+- **Phát hiện:** icon Túi đồ trên HUD chuyển vòng đỏ gạch chéo "Đầy". Xác nhận
+  KÉP mới tin: template `common/bag_full_icon` (match màu, ROI khoá, ngưỡng 0.88)
+  VÀ tỉ lệ pixel đỏ trong `farm.bag_full_icon_rect` ≥ 0.12 — một vế riêng lẻ đều
+  dính giả (template 0.806 trên frame âm; mảng đỏ trùng vị trí ở màn login/shop).
+  Chỉ kiểm khi khung hình là HUD thật (mỏ neo đọc được).
+- **Luồng:** MONITOR phát `BAG_FULL` sau `bag_full_cycles` chu kỳ liên tiếp
+  (ưu tiên: HP thấp > túi đầy > sai map); VERIFY_HUD cũng kiểm ngay lúc xuất phát
+  để khỏi hành quân vô ích. Runner: BAG_FULL → retreat → sell NGAY (không chờ
+  `every_n_retreats`) → farm lại. Chặn lặp: BAG_FULL 3 lần liên tiếp (bán không
+  làm nhẹ túi — dry_run hoặc blacklist giữ hết) → dừng báo người.
+- **Nghiệm thu AVD 27/10 (túi đầy thật, bán THẬT):** farm phát hiện ngay tại
+  VERIFY_HUD (14:23:15) → retreat về Tuyền Châu, nghỉ hồi 97% HP → sell bán
+  thật 7 món whitelist (5 chén, 1 áo, 1 nông cụ) trong ~14s, OCR xác nhận
+  tiền tăng, 11 ô "lạ" được giữ đúng thiết kế → icon Túi đồ hết đỏ
+  (template None, red_ratio 0.0) → farm tự hành quân đi farm lại (14:29:09).
+  Trọn chu trình không cần người can thiệp. Test 205/205 pass.
+  Lưu ý: 27/10 đã tắt `dry_run` + `confirm_mode` để test bán thật — BẬT LẠI
+  khi sang production / trước khi chạy acc thật có đồ giá trị.
+
 ### Auto nhấn chiêu + vật phẩm hồi máu (thêm 2026-10-27)
 
 - **Phương án A (xoay vòng):** `SkillCaster` (pure logic, có test) trong `tasks/farm.py`

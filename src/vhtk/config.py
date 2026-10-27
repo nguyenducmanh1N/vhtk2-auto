@@ -68,8 +68,10 @@ class ActionDelay(_StrictModel):
 
 
 class SafetySettings(_StrictModel):
-    dry_run: bool
-    confirm_mode: bool
+    # Mặc định schema PHẢI an toàn: thiếu khoá trong YAML -> dry_run/confirm
+    # BẬT. File settings.yaml có thể tắt tạm khi test có giám sát.
+    dry_run: bool = True
+    confirm_mode: bool = True
     confirm_timeout_seconds: float = Field(gt=0)
     kill_switch_file: str
     max_actions_per_minute: int = Field(gt=0)
@@ -225,6 +227,15 @@ class FarmSettings(_StrictModel):
     engage_warmup_toggle_seconds: float = Field(ge=0, default=2.0)
     # Dải màu HSV của phần MÁU trên thanh HP (đọc % máu bằng màu, không OCR)
     hp_bar_color: HSVRange
+    # Phát hiện túi đầy ("Hành trang quá nặng"): icon Túi đồ trên HUD chuyển
+    # thành vòng đỏ gạch chéo chữ "Đầy". Xác nhận KÉP mới tin — template
+    # common/bag_full_icon khớp VÀ tỉ lệ pixel đỏ trong ô icon vượt ngưỡng
+    # (icon thường cùng khối tròn, match xám/màu một mình lên tới 0.806 trên
+    # frame âm tính — đo 2026-10-27)
+    bag_full_color: HSVRange = HSVRange(h=(172, 8), s=(120, 255), v=(80, 255))
+    bag_full_min_red_ratio: float = Field(ge=0.0, le=1.0, default=0.12)
+    # Túi đầy liên tiếp N chu kỳ MONITOR mới phát BAG_FULL (chống nhiễu 1 khung)
+    bag_full_cycles: int = Field(gt=0, default=2)
     # Auto nhấn chiêu + vật phẩm hồi máu trong vòng MONITOR
     skills: FarmSkillSettings = FarmSkillSettings()
 
@@ -347,6 +358,9 @@ class FarmCoordinates(_StrictModel):
     # Tâm 8 ô trên vòng chiêu HUD (ô 1-8). (0, 0) = chưa đo — farm task từ
     # chối bật auto chiêu với ô chưa đo toạ độ
     skill_slots: list[tuple[int, int]] = []
+    # Ô icon Túi đồ trên HUD (x, y, w, h) — kiểm tỉ lệ pixel đỏ khi icon
+    # chuyển trạng thái "Đầy"; None = tắt phát hiện túi đầy
+    bag_full_icon_rect: tuple[int, int, int, int] | None = None
 
     @model_validator(mode="after")
     def _skill_slots_len(self) -> FarmCoordinates:

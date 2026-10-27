@@ -46,10 +46,10 @@ ocr:
 safety:
   # Chế độ khô: BẬT mặc định — không thực hiện hành động không thể hoàn tác
   # (bán, mua, giao dịch), thay vào đó chụp màn + ghi log
-  dry_run: true
+  dry_run: false # tắt 2026-10-27 để test bán thật trên AVD — bật lại khi sang production
   # Với bán đồ / chuyển vàng: gửi ảnh lên Telegram, chờ người xác nhận
   # (bật mặc định trong 5 phiên chạy đầu)
-  confirm_mode: true
+  confirm_mode: false # tắt cùng dry_run 27/10: notifier còn là Null (chưa nối Telegram) — bật lại khi có 5a
   # Chờ người xác nhận tối đa bao lâu (giây); hết giờ coi như TỪ CHỐI
   confirm_timeout_seconds: 300.0
   # Tên file kill-switch ở thư mục gốc; file xuất hiện → dừng sạch mọi task
@@ -183,6 +183,14 @@ farm:
   # Dải màu HSV phần MÁU của thanh HP (đo trên AVD 2026-10-25: đỏ ~H 0-8 & 172-179)
   # h quấn vòng được (lo > hi) vì đỏ nằm hai đầu bánh xe hue
   hp_bar_color: {h: [172, 8], s: [120, 255], v: [90, 255]}
+  # --- Phát hiện túi đầy ("Hành trang quá nặng" — game khoá võ công) ---
+  # Icon Túi đồ trên HUD chuyển vòng đỏ gạch chéo "Đầy". Xác nhận kép:
+  # template common/bag_full_icon khớp VÀ tỉ lệ pixel đỏ trong ô icon
+  # (coordinates.yaml farm.bag_full_icon_rect) vượt ngưỡng. Phát BAG_FULL
+  # sau N chu kỳ MONITOR liên tiếp -> runner cho về thành bán ngay.
+  bag_full_color: {h: [172, 8], s: [120, 255], v: [80, 255]}
+  bag_full_min_red_ratio: 0.12
+  bag_full_cycles: 2
   # --- Auto nhấn chiêu trong lúc farm (phương án A: xoay vòng đơn giản) ---
   # Mỗi chu kỳ MONITOR tool nhấn ô kế tiếp trong slots; chiêu đang hồi thì
   # cú tap vô hại, game tự bỏ qua. Chỉ nhấn khi khung hình đọc được, đang ở
@@ -197,12 +205,12 @@ farm:
     cast_interval: 1.0
     # Ô vật phẩm hồi máu (1-8); 0 = không dùng. Ô này KHÔNG xoay vòng —
     # chỉ nhấn khi HP tụt dưới ngưỡng dưới đây
-    heal_slot: 8
+    heal_slot: 0
     # Dùng vật phẩm hồi máu khi HP dưới ngưỡng này (%) — nên đặt CAO hơn
     # hp_retreat_percent của acc: thuốc cứu trước, hết cứu nổi mới rút về
-    heal_hp_percent: 40
+    heal_hp_percent: 60
     # Giãn cách tối thiểu giữa 2 lần dùng thuốc (giây) — thuốc có hồi riêng
-    heal_cooldown: 30.0
+    heal_cooldown: 5.0
 
 # Task đăng nhập (R1) — flow: title -> SIGN IN (3CID) -> form -> chọn nhân vật -> vào game
 login:

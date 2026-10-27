@@ -63,6 +63,15 @@ common/btn_close:
 common/btn_x:
   grayscale: false
 
+# Icon Túi đồ trạng thái "Đầy" (vòng đỏ gạch chéo): PHẢI match màu — icon
+# thường cùng khối tròn, chỉ khác vòng đỏ (match frame âm lên 0.806, dương
+# 1.0 — đo 2026-10-27); khoá ROI quanh vị trí cố định của nút trên HUD và
+# nâng ngưỡng. Lớp xác nhận thứ hai (tỉ lệ pixel đỏ) nằm trong farm task.
+common/bag_full_icon:
+  grayscale: false
+  threshold: 0.88
+  roi: [861, 149, 60, 60]
+
 # ROI cho btn_close: X của cửa sổ lớn (túi/Hành trang...) nằm ở (921,58);
 # nút X màn bản đồ ở (852,38) trông gần giống — KHÔNG được để recovery
 # match nó rồi đóng bản đồ giữa lúc điều hướng (sự cố 2026-10-26 12:16)
