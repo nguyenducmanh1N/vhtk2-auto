@@ -185,6 +185,16 @@ class FarmSettings(_StrictModel):
     # Số lần tap điểm đến trên ảnh bản đồ trước khi coi là thất bại — game
     # hay nuốt tap đầu ngay sau khi preview map vừa đổi (quan sát AVD 26/10)
     map_spot_tap_attempts: int = Field(gt=0, default=3)
+    # Chọn map qua KHO data/maps (map chưa có template row_/hud_name_):
+    # ngưỡng match mặt nạ chữ của dòng tên (đo 28/10 ngưỡng nhị phân 160:
+    # tên ngắn chữ mảnh như "Võ Đang" ~0.87 có mặt, vắng mặt ~0.3-0.6; tap
+    # nhầm dòng tên gần giống đã có vòng xác minh tiêu đề chặn lại)
+    map_row_match_threshold: float = Field(gt=0.0, le=1.0, default=0.80)
+    # Ngưỡng match crop thanh tiêu đề màn bản đồ (xác minh map hiện tại/preview)
+    map_title_match_threshold: float = Field(gt=0.0, le=1.0, default=0.85)
+    # Số bước cuộn tối đa khi dò danh sách "Tìm map" (mỗi bước NỬA trang để
+    # dòng nào cũng có ít nhất một lần hiện nguyên vẹn giữa vùng danh sách)
+    map_list_max_pages: int = Field(gt=0, default=24)
     # Sau khi map đóng: chờ tối đa bao lâu để thấy tìm đường THỰC SỰ bắt đầu
     # (dòng "Đi: ..." hoặc toạ độ HUD đổi) — map đóng không đồng nghĩa đã đi.
     # Đo trên AVD 26/10: có lúc trễ hơn 5s mới nhúc nhích; đặt quá ngắn thì
@@ -249,6 +259,37 @@ class LoginSettings(_StrictModel):
     clear_chars: int = Field(gt=0)
 
 
+class OrchestratorSettings(_StrictModel):
+    """Multi-instance orchestration (W2): worker processes + LDPlayer lifecycle.
+
+    Mỗi worker là MỘT TIẾN TRÌNH riêng (``python -m vhtk.worker``) — crash
+    một acc không kéo các acc khác; restart đúng worker = kill + spawn lại
+    đúng PID trong registry. Mac dev (AVD, 1 thiết bị) đặt
+    ``manage_instances: false`` — orchestrator chỉ quản lý tiến trình, không
+    đụng ldconsole; trên server Windows bật true. Code không if/else theo
+    môi trường — chỉ khác giá trị config này.
+    """
+
+    # Có điều khiển vòng đời instance LDPlayer qua ldconsole hay không
+    # (false = thiết bị đã chạy sẵn, vd AVD trên Mac dev)
+    manage_instances: bool = False
+    # Index instance MẪU (đã cài game, 960x540/DPI 160) để `ldconsole copy`
+    # khi thêm tài khoản mới; None = không cho provision
+    template_instance_index: int | None = None
+    # Số instance chạy đồng thời tối đa (farm + main); mở main khi kín slot
+    # thì scheduler yêu cầu tạm dừng 1 worker farm trước
+    max_concurrent_instances: int = Field(gt=0, default=5)
+    # Chờ Android boot xong sau `ldconsole launch` (giây)
+    boot_timeout: float = Field(gt=0, default=180.0)
+    # Chờ worker dừng sạch qua kill-switch trước khi buộc dừng tiến trình (giây)
+    stop_timeout: float = Field(gt=0, default=120.0)
+    # Thư mục registry PID + file trạng thái từng worker
+    workers_dir: Path = Path("logs/workers")
+    # Gom yêu cầu chuyển vàng: đợi tối đa N giây kể từ yêu cầu đầu tiên để
+    # nhiều acc đạt ngưỡng gần nhau đi chung MỘT lần mở main (0 = mở ngay)
+    main_batch_window_seconds: float = Field(ge=0, default=300.0)
+
+
 class TelegramSettings(_StrictModel):
     enabled: bool
     bot_token: str = ""
@@ -278,6 +319,8 @@ class Settings(_StrictModel):
     quality: QualitySettings
     farm: FarmSettings
     login: LoginSettings
+    # Mặc định đầy đủ để settings.yaml cũ (chưa có mục này) vẫn load được
+    orchestrator: OrchestratorSettings = OrchestratorSettings()
     telegram: TelegramSettings
     logging: LoggingSettings
     paths: PathSettings

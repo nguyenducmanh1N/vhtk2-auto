@@ -34,6 +34,7 @@ from vhtk.core.errors import (
 )
 from vhtk.core.fsm import ABORT, DONE, BaseTask, State, TaskContext
 from vhtk.core.vision import Image, bar_fill_percent, color_ratio
+from vhtk.mapstore import MapStore, maps_dir
 from vhtk.tasks.navigate import (
     TPL_AUTO_OFF,
     TPL_AUTO_ON,
@@ -43,8 +44,6 @@ from vhtk.tasks.navigate import (
     TPL_TAB_FIND_MAP_OFF,
     TPL_TAB_FIND_MAP_ON,
     Navigator,
-    hud_name_template,
-    row_template,
 )
 
 log = structlog.get_logger(__name__)
@@ -242,7 +241,8 @@ class FarmTask(BaseTask):
             raise TaskDefinitionError("FarmTask requires ctx.account")
         self._farm = ctx.account.farm
         coords: Coordinates = load_coordinates(ctx.settings.paths.coordinates_file)
-        self._nav = Navigator(ctx, coords.farm, ctx.settings.farm)
+        store = MapStore(maps_dir(ctx.settings.templates.version))
+        self._nav = Navigator(ctx, coords.farm, ctx.settings.farm, store=store)
         self._hp_rect = coords.farm.hp_bar_rect
         self._skill_points = coords.farm.skill_slots
         self._bag_rect = coords.farm.bag_full_icon_rect
@@ -335,12 +335,12 @@ class FarmTask(BaseTask):
             TPL_TAB_FIND_MAP_OFF,
             TPL_AUTO_ON,
             TPL_AUTO_OFF,
-            hud_name_template(self._farm.map),
-            row_template(self._farm.map),
         )
+        # map đích: cần cặp template row/hud_name HOẶC mục trong kho data/maps
+        missing += self._nav.map_requirements_missing(self._farm.map)
         if missing:
             log.error(
-                "farm templates missing — capture them with tools/capture.py",
+                "farm prerequisites missing — capture templates or harvest maps",
                 missing=missing,
             )
             return ABORT
@@ -368,12 +368,15 @@ class FarmTask(BaseTask):
             log.warning("HP already low before farming, signalling retreat first", hp=round(hp, 1))
             self.signal = FarmSignal.HP_LOW
             return S_DISABLE_AUTO
-        if (
-            self._nav.in_map(self._farm.map, frame=frame)
-            and self._nav.auto_state(frame)[0] is True
-        ):
-            log.info("already farming, going straight to MONITOR")
-            return S_MONITOR
+        if self._nav.auto_state(frame)[0] is True:
+            here = self._nav.in_map(self._farm.map, frame=frame)
+            if here is None:
+                # map chỉ có trong kho: một lần mở/đóng bản đồ so tiêu đề rẻ
+                # hơn nhiều so với đi lại cả chuyến điều hướng khi đã ở đích
+                here = self._nav.confirm_in_map(self._farm.map)
+            if here:
+                log.info("already farming, going straight to MONITOR")
+                return S_MONITOR
         return S_OPEN_MAP
 
     def _open_map(self) -> str:
@@ -395,8 +398,13 @@ class FarmTask(BaseTask):
             self._nav.tap_map_point(x, y)
         except VerifyFailed:
             # tap điểm đến trùng/sát chỗ đang đứng thì game lờ đi, map cứ
-            # mở — đã ở trong map farm thì bật auto đánh tại chỗ luôn
-            if self._nav.in_map(self._farm.map):
+            # mở — đã ở trong map farm thì bật auto đánh tại chỗ luôn.
+            # Map từ kho (in_map=None): confirm tự đóng map rồi mở MỚI so
+            # tiêu đề — tiêu đề màn đang mở là PREVIEW, không tin được
+            here = self._nav.in_map(self._farm.map)
+            if here is None:
+                here = self._nav.confirm_in_map(self._farm.map)
+            if here:
                 log.info("already in farm map, engaging in place")
                 self._nav.close_map()
                 return S_ENABLE_AUTO

@@ -223,15 +223,19 @@ def test_broken_account_file_listed_with_error(client: TestClient, workspace: Pa
     assert any(row.get("error") for row in rows if row["stem"] == "hong")
 
 
-def test_farm_maps_lists_ready_template_pairs(client: TestClient) -> None:
-    """Chỉ map có đủ cặp row_<slug> + hud_name_<slug> mới được liệt kê,
-    tên hiển thị lấy từ display_name trong manifest."""
+def test_farm_maps_merges_store_and_template_pairs(client: TestClient) -> None:
+    """Liệt kê mọi map có tên trong kho data/maps + map có đủ cặp template
+    row_<slug>/hud_name_<slug>; tên display_name trong manifest template thắng."""
     maps = client.get("/api/farm-maps").json()
     by_slug = {m["slug"]: m["name"] for m in maps}
     # 3 map đã chụp đủ cặp trên AVD (templates/v1.0-avd — settings test trỏ repo thật)
     assert by_slug.get("tuyen_chau") == "Tuyền Châu"
     assert by_slug.get("long_tuyen_thon") == "Long Tuyền Thôn"
     assert by_slug.get("bac_tuyen_chau") == "Bắc Tuyền Châu"
+    # map chỉ có trong kho đã quét (không có template) cũng phải chọn được
+    assert "da_tru_lam" in by_slug
+    assert len(by_slug) >= 80  # kho 86 map, không trùng slug
+    assert [m["name"] for m in maps] == sorted(m["name"] for m in maps)
 
 
 def test_runner_restart_unknown_account_404(client: TestClient) -> None:
@@ -261,3 +265,124 @@ def test_map_library_endpoints(client: TestClient) -> None:
         assert img.status_code == 200
         assert img.headers["content-type"] == "image/png"
     assert client.get("/api/maps/99999/image").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# worker endpoints (W2 — supervisor giả, không tiến trình thật)
+# ---------------------------------------------------------------------------
+
+
+class FakeSupervisor:
+    """Ghi lại lời gọi; trạng thái chạy/dừng giữ trong set."""
+
+    def __init__(self) -> None:
+        self.running: set[str] = set()
+        self.calls: list[tuple[str, str]] = []
+        self.fail_with: Exception | None = None
+
+    class _Registry:
+        def __init__(self, outer: FakeSupervisor) -> None:
+            self._outer = outer
+
+        def live_stems(self) -> list[str]:
+            return sorted(self._outer.running)
+
+        def info(self, stem: str):  # type: ignore[no-untyped-def]  # duck-typed cho endpoint
+            from vhtk.registry import WorkerInfo
+
+            return WorkerInfo(stem=stem, pid=4242, account_path="x", alive=True)
+
+    @property
+    def registry(self) -> FakeSupervisor._Registry:
+        return FakeSupervisor._Registry(self)
+
+    def worker_status(self, stem: str) -> dict[str, object]:
+        return {
+            "stem": stem,
+            "running": stem in self.running,
+            "pid": 4242 if stem in self.running else None,
+            "state": {},
+        }
+
+    def _maybe_fail(self) -> None:
+        if self.fail_with is not None:
+            raise self.fail_with
+
+    def start(self, stem: str) -> int:
+        self._maybe_fail()
+        self.calls.append(("start", stem))
+        self.running.add(stem)
+        return 4242
+
+    def stop(self, stem: str) -> None:
+        self.calls.append(("stop", stem))
+        self.running.discard(stem)
+
+    def restart(self, stem: str) -> int:
+        self._maybe_fail()
+        self.calls.append(("restart", stem))
+        self.running.add(stem)
+        return 4243
+
+    def provision(self, stem: str) -> int:
+        self._maybe_fail()
+        self.calls.append(("provision", stem))
+        self.running.add(stem)
+        return 4244
+
+
+@pytest.fixture()
+def fake_supervisor() -> FakeSupervisor:
+    return FakeSupervisor()
+
+
+@pytest.fixture()
+def wclient(workspace: Path, fake_supervisor: FakeSupervisor) -> TestClient:
+    return TestClient(
+        create_app(workspace / "settings.yaml", supervisor_factory=lambda: fake_supervisor)
+    )
+
+
+def test_workers_list_and_lifecycle(wclient: TestClient, fake_supervisor: FakeSupervisor) -> None:
+    assert wclient.post("/api/accounts/farm01", json=sample_account()).status_code == 200
+    rows = wclient.get("/api/workers").json()
+    assert rows[0]["stem"] == "farm01" and rows[0]["running"] is False
+    assert rows[0]["name"] == "farm01" and rows[0]["adb_serial"] == "emulator-5556"
+
+    r = wclient.post("/api/workers/farm01/start")
+    assert r.status_code == 200 and r.json()["pid"] == 4242
+    assert wclient.get("/api/workers").json()[0]["running"] is True
+
+    assert wclient.post("/api/workers/farm01/restart").json()["pid"] == 4243
+    assert wclient.post("/api/workers/farm01/stop").json()["status"] == "stopped"
+    assert fake_supervisor.calls == [
+        ("start", "farm01"), ("restart", "farm01"), ("stop", "farm01"),
+    ]
+
+
+def test_workers_unknown_account_404(wclient: TestClient) -> None:
+    for op in ("start", "stop", "restart", "provision"):
+        assert wclient.post(f"/api/workers/khongco/{op}").status_code == 404
+
+
+def test_workers_orchestrator_error_mapped_to_409(
+    wclient: TestClient, fake_supervisor: FakeSupervisor
+) -> None:
+    from vhtk.orchestrator import OrchestratorError
+
+    assert wclient.post("/api/accounts/farm01", json=sample_account()).status_code == 200
+    fake_supervisor.fail_with = OrchestratorError("already running")
+    r = wclient.post("/api/workers/farm01/start")
+    assert r.status_code == 409 and "already running" in r.json()["detail"]
+
+
+def test_runner_endpoints_ride_on_supervisor(
+    wclient: TestClient, fake_supervisor: FakeSupervisor
+) -> None:
+    assert wclient.post("/api/accounts/farm01", json=sample_account()).status_code == 200
+    s = wclient.get("/api/runner").json()
+    assert s == {"running": False, "pids": [], "stems": []}
+    r = wclient.post("/api/runner/restart", json={"account": "farm01"})
+    assert r.status_code == 200 and r.json()["pid"] == 4243
+    s2 = wclient.get("/api/runner").json()
+    assert s2["running"] is True and s2["stems"] == ["farm01"]

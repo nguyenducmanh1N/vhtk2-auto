@@ -15,9 +15,9 @@ Cập nhật lần cuối: 2026-10-25. Kế hoạch chi tiết từng giai đo�
 | 4.2 | R3 Farm + Retreat + navigate (di chuyển, bật auto, giám sát HP, rút về) | 🔶 Code + test xong; **live trên AVD cả chu trình tự nhiên**: tới map farm → bật auto → MONITOR → quái đánh tụt HP < 30% thật → HP_LOW → tắt auto → đi bộ về Tuyền Châu → REST hồi ≥ 90% → tự quay lại farm chu kỳ 2; kill-switch dừng sạch 4s. Còn thiếu DoD: chạy bền ≥ 2h |
 | 4.3–4.5 | sell, equipment, skill_verify | ⬜ Chưa làm (stub) |
 | D1 | App desktop — quản lý tài khoản & an toàn (`python -m vhtk.ui`): CRUD acc trên YAML giữ comment, tab An toàn có dải trạng thái bảo vệ; FastAPI + web UI, pywebview tuỳ chọn | ✅ Xong, đã verify bằng trình duyệt |
-| 5 | Orchestrator đa instance + notify Telegram | ⬜ Notify: đã có protocol + NullNotifier; Telegram thật và orchestrator chưa làm |
+| 5 | Orchestrator đa instance + notify Telegram | 🔶 W2-prep XONG trên Mac (2026-10-28): worker process + registry + supervisor + scheduler + API/GUI; còn nghiệm thu thật trên Windows (W1→W2). Notify Telegram thật chưa làm |
 
-Kiểm tra hiện tại: **163 test pass**, `ruff check` sạch, `mypy --strict` sạch (27 file).
+Kiểm tra hiện tại: **267 test pass**, `ruff check` sạch, `mypy --strict` sạch (31 file).
 
 ## Giai đoạn 0 — Bộ khung
 
@@ -287,8 +287,45 @@ Thêm: `TaskError` (gốc lỗi trong-task, FSM đưa về RECOVER) → `StateTi
   cho các điểm HUD như ô chiêu). Kiểm chứng Playwright: Tuyền Châu click giữa
   thành ra "pixel 587/262 — toạ độ game 181/187" (nhân vật thật đứng 182/189).
 - **Nợ:** harvest 0.92 từng nuốt dòng tên gần giống ("Đại Thảo Nguyên 2",
-  "Tàn Lăng", "Yến Tử động-2"...) — đã nâng ngưỡng 0.97, CẦN quét lại và điền
-  tên bổ sung.
+  "Tàn Lăng", "Yến Tử động-2"..., xác nhận thêm 28/10: thiếu cả "Thiếu Lâm",
+  "Nga My") — đã nâng ngưỡng 0.97, CẦN quét lại và điền tên bổ sung.
+
+### Điều hướng qua kho map — mọi map đã quét đều farm được (2026-10-28)
+
+- **Kho là nguồn sự thật:** map KHÔNG có cặp template `row_`/`hud_name_` giờ
+  điều hướng bằng kho (`src/vhtk/mapstore.py` — `MapStore` đọc manifest, cache
+  ảnh, parse calibration thành `MapTransform`). Dropdown "Map farm" trong GUI
+  liệt kê đủ 86 map (`/api/farm-maps` gộp kho + cặp template, template
+  `display_name` thắng tên kho).
+- **Chọn map:** `Navigator.select_map` ưu tiên template (3 map cũ, nhanh);
+  không có thì `select_map_from_store` — match MẶT NẠ CHỮ crop dòng (nhị phân
+  160, đo 28/10: nền thường p95≈136 / highlight p95≈99 / chữ tới 245; ngưỡng
+  cũ 200 làm tên ngắn như "Võ Đang" chỉ còn 101px chữ → score 0.78 rớt oan),
+  cuộn NỬA trang (dòng ở mép trang bị cắt → match tụt), dừng sớm khi chạm đáy
+  (khung không đổi), tap xong XÁC MINH crop tiêu đề (nới biên 8px — match
+  cùng cỡ không có chỗ trượt, lệch 1-2px là rớt); tap nhầm dòng tên gần giống
+  (tiêu đề lệch) thì quét tiếp chứ không nhận bừa.
+- **Bẫy quán tính (lỗi thực tế 28/10):** sau cú vuốt danh sách còn TRÔI —
+  tap theo khung cũ trúng dòng bên cạnh (định tap "Võ Đang" trúng "Thiên Sư
+  động-1"). Fix: chờ bbox dòng đứng yên qua 2 khung liên tiếp mới tap.
+- **Xác minh vị trí không cần template HUD:** probe AVD 28/10 chốt — mở màn
+  bản đồ MỚI thì tiêu đề luôn reset về map HIỆN TẠI (preview cũ không dính).
+  `in_map` thành 3 trạng thái (None = không có template HUD, khung đơn không
+  đọc được); `confirm_in_map` đắt hơn (mở/đóng bản đồ so tiêu đề kho) dùng ở:
+  VERIFY_HUD idempotent-check, fallback "đã ở trong map" của TAP_SPOT, và
+  `wait_arrival` (xác minh 1 lần/chuỗi ổn định; 2 lần sai tiêu đề liên tiếp
+  → TravelStalled). MONITOR/REST với map kho: in_map=None được bỏ qua (không
+  phá farm/giấc nghỉ bằng cách mở bản đồ mỗi chu kỳ — phát hiện sai map và
+  bị-kéo-đi tạm mất với map kho, đổi lấy không cần chụp HUD 86 lần).
+- `tools/calibrate_map.py` dùng lại `select_map_from_store` + `mapstore` (bỏ
+  bản sao hàm chọn dòng + rect tiêu đề hardcode).
+- **Nghiệm thu sống AVD 28/10:** chọn "Đào Hoa đảo" (kho, trang đầu) ✅; chọn
+  "Võ Đang" (kho, cuộn ~7 bước nửa trang) ✅ tiêu đề khớp; `confirm_in_map`
+  sai map → False ✅, đúng map (Bắc Tuyền Châu, giả lập thiếu template HUD)
+  → True ✅. Test 227, ruff + mypy --strict sạch.
+- **Phát hiện mới (chưa dùng):** màn bản đồ có ô "Nhập tên cần tìm" lọc danh
+  sách — nhanh hơn cuộn nhưng ADB `input text` không gõ được tiếng Việt có
+  dấu; để ngỏ, cân nhắc khi lên Windows (LDPlayer có thể khác đường nhập).
 
 ### Phát hiện túi đầy → về thành bán (thêm 2026-10-27, phương án A)
 
@@ -334,7 +371,63 @@ Thêm: `TaskError` (gốc lỗi trong-task, FSM đưa về RECOVER) → `StateTi
   (0.5–2s ngẫu nhiên) + `max_actions_per_minute` (30) quyết định ≈ 1 tap/2s — muốn nhanh
   hơn phải nới 2 giới hạn an toàn đó, không phải giảm cast_interval.
 
-## Test (171 test, không cần thiết bị)
+## W2-prep — Điều khiển đa instance LDPlayer (code xong trên Mac, 2026-10-28)
+
+Toàn bộ phần KHÔNG cần ≥2 thiết bị của W2 đã viết + test trên Mac; trên Windows
+chỉ còn cài đặt và nghiệm thu thật. **Chốt phương án A: mỗi acc một TIẾN TRÌNH
+worker riêng** (cô lập crash, restart đúng worker); PLAN.md đã sửa hết mâu thuẫn
+thread/process.
+
+- **`src/vhtk/worker.py`** — `AccountWorker` (lõi 5b): vòng đời 1 acc trên 1 thiết
+  bị (farm → HP_LOW/BAG_FULL → retreat/sell → farm; GOLD_THRESHOLD ghi cờ
+  `gold_request` vào state file + báo notifier — W3 mới giao dịch). Chạy bằng
+  `python -m vhtk.worker --account <yaml>`; tự ghi `logs/workers/<stem>.state.json`
+  (atomic, mỗi lần đổi state qua hook `TaskContext.on_state` mới của FSM) và tự
+  đăng ký PID. `tools/run_farm.py` giờ là lớp vỏ gọi worker (CLI giữ nguyên).
+- **Kill-switch 2 tầng:** `STOP` (toàn cục) + `STOP.<stem>` (theo acc) — InputGate,
+  Safety, Device nhận `stem`; supervisor dừng worker bằng `STOP.<stem>` trước,
+  hết `orchestrator.stop_timeout` mới terminate/kill (psutil).
+- **`src/vhtk/registry.py`** — sổ `{stem → PID}` bằng file JSON + psutil (chạy cả
+  Mac/Win), chống PID-reuse bằng đối chiếu cmdline với đường dẫn account. Thay
+  hẳn pgrep; `./vhtk` và GUI cùng dùng một đường.
+- **`src/vhtk/orchestrator.py`** — `WorkerSupervisor`: start (launch instance qua
+  ldconsole nếu `orchestrator.manage_instances: true` → đợi `sys.boot_completed`
+  → resolve serial, lệch thì ghi ngược YAML → spawn worker), stop (kill-switch
+  trước, leo thang sau), restart đúng 1 worker, **provision** (`ldconsole copy`
+  từ `template_instance_index` → ghi index mới vào YAML → start). `MainScheduler`
+  (pure logic cho W3): gom yêu cầu vàng trong `main_batch_window_seconds`, nhường
+  slot `max_concurrent_instances` bằng cách tạm dừng 1 farm KHÔNG trong chuyến.
+  `LDPlayerManager.clone()` mới (diff list2 trước/sau copy).
+- **Config:** mục `orchestrator:` mới trong settings.yaml (manage_instances —
+  Mac false/Win true, template_instance_index, max_concurrent_instances,
+  boot_timeout, stop_timeout, workers_dir, main_batch_window_seconds); schema có
+  default đầy đủ nên YAML cũ vẫn load.
+- **API + GUI:** `GET /api/workers`, `POST /api/workers/{stem}/start|stop|restart|provision`;
+  `/api/runner*` cũ giữ tương thích nhưng chạy trên registry/supervisor. GUI thêm
+  tab **Thiết bị**: mỗi acc một dòng (trạng thái, pid, task/state), nút
+  "Mở & đăng nhập" / "Chạy lại" / "Dừng" (dừng sạch) / "Cấp máy mới" (provision,
+  chỉ Windows), tự làm mới 5s.
+- **Test mới (100):** registry (6), orchestrator supervisor + scheduler (17 — fake
+  ldconsole/spawn/boot/psutil, kiểm cả ghi-ngược serial, leo thang kill, dừng 1
+  worker không đụng worker khác), worker loop (7 — fake tasks đủ nhánh tín hiệu),
+  FSM on_state (2), kill-switch theo acc (1), ldconsole clone (3), API workers (4).
+
+**Checklist Windows (W1 → nghiệm thu W2), dành cho người cài đặt:**
+1. Cài Python 3.11+, `python -m venv .venv && .venv\Scripts\pip install -e .[dev]`
+   (psutil đã nằm trong dependencies), cài LDPlayer 9, bật VT trong BIOS.
+2. Tạo instance MẪU 960x540/DPI 160 đã cài game; ghi index của nó vào
+   `orchestrator.template_instance_index`; đặt `orchestrator.manage_instances: true`;
+   kiểm `ldplayer.ldconsole_path`.
+3. `python tools/smoke_device.py` trên 1 instance; chụp bộ template `v1.0/`
+   (checklist 3b + `trade/`), quét lại kho map, đổi `templates.version: v1.0`.
+4. Tạo acc qua GUI (`python -m vhtk.ui --browser`) → tab Thiết bị → "Mở & đăng
+   nhập" từng acc; thêm acc mới bằng "Cấp máy mới" (clone instance mẫu).
+5. Nghiệm thu DoD W2: 2 farm song song 4h; `STOP` dừng tất cả <2 phút;
+   `STOP.<stem>` dừng đúng 1 acc; kill 1 worker → worker khác chạy tiếp;
+   sửa acc trên GUI → chỉ instance đó restart. `dry_run` BẬT lại trước khi
+   chạy acc thật (27/10 đang tắt để test bán trên AVD).
+
+## Test (267 test, không cần thiết bị)
 
 - `tests/test_config.py` — load/validate settings, thông báo lỗi thiếu key/sai kiểu.
 - `tests/test_vision.py` (37) — NMS, parse số/phân số OCR, preprocess auto-invert, detect_quality với ảnh tổng hợp, TemplateStore/find/ROI/wait trên screenshot giả.

@@ -33,6 +33,7 @@ import structlog
 
 from vhtk.config import Resolution, SafetySettings
 from vhtk.core.errors import ADBError, DeviceLost, KillSwitchTriggered, RateLimited
+from vhtk.core.safety import kill_switch_files
 
 log = structlog.get_logger(__name__)
 
@@ -73,12 +74,14 @@ class InputGate:
         safety: SafetySettings,
         kill_switch_path: Path | None = None,
         *,
+        stem: str | None = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         rng: random.Random | None = None,
     ) -> None:
         self._safety = safety
-        self._kill_switch = kill_switch_path or Path(safety.kill_switch_file)
+        base = kill_switch_path or Path(safety.kill_switch_file)
+        self._kill_switches = kill_switch_files(base, stem)
         self._clock = clock
         self._sleep = sleep
         self._rng = rng or random.Random()
@@ -103,8 +106,9 @@ class InputGate:
         self._history.append(self._clock())
 
     def _check_kill_switch(self) -> None:
-        if self._kill_switch.exists():
-            raise KillSwitchTriggered(f"kill-switch file present: {self._kill_switch}")
+        for path in self._kill_switches:
+            if path.exists():
+                raise KillSwitchTriggered(f"kill-switch file present: {path}")
 
     def _enforce_rate_limit(self, action: str) -> None:
         limit = self._safety.max_actions_per_minute
@@ -230,6 +234,8 @@ class Device:
         resolution: expected screen size; input coordinates are validated
             against it to catch bugs before they reach the device.
         gate: input gate override (tests); a fresh one is built by default.
+        stem: account stem for the per-account kill-switch (``STOP.<stem>``);
+            forwarded to the default-built gate, ignored when ``gate`` is given.
         adb_factory: returns an adbutils device handle for a serial (tests).
         backend_factory: builds the screenshot backend from an adb handle.
         sleep: sleep function used by reconnect backoff (tests).
@@ -244,13 +250,14 @@ class Device:
         resolution: Resolution,
         *,
         gate: InputGate | None = None,
+        stem: str | None = None,
         adb_factory: AdbFactory | None = None,
         backend_factory: BackendFactory | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._serial = serial
         self._resolution = resolution
-        self._gate = gate or InputGate(safety)
+        self._gate = gate or InputGate(safety, stem=stem)
         self._adb_factory = adb_factory or _default_adb_factory
         self._backend_factory: BackendFactory = backend_factory or AdbScreencapBackend
         self._sleep = sleep

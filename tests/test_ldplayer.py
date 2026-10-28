@@ -130,3 +130,53 @@ def test_set_resolution_sends_modify_when_stopped() -> None:
     mgr = LDPlayerManager("ld.exe", runner=runner, adb_serials=list)
     mgr.set_resolution(1, 960, 540, 160)
     assert ["modify", "--index", "1", "--resolution", "960,540,160"] in runner.calls
+
+
+# ---------------------------------------------------------------------------
+# clone (ldconsole copy, W2 provision)
+# ---------------------------------------------------------------------------
+
+
+class SequencedRunner:
+    """list2 trả kết quả KHÁC NHAU trước/sau lệnh copy."""
+
+    def __init__(self, list2_before: str, list2_after: str) -> None:
+        self._before = list2_before
+        self._after = list2_after
+        self._copied = False
+        self.calls: list[list[str]] = []
+
+    def __call__(self, args: list[str]) -> str:
+        self.calls.append(list(args))
+        if args[0] == "copy":
+            self._copied = True
+            return ""
+        if args[0] == "list2":
+            return self._after if self._copied else self._before
+        raise LDConsoleError(f"unexpected: {args}")
+
+
+def test_clone_returns_new_index() -> None:
+    runner = SequencedRunner(
+        "0,template,1,1,0,1,1",
+        "0,template,1,1,0,1,1\n3,farm05,1,1,0,1,1",
+    )
+    mgr = LDPlayerManager("ldconsole.exe", runner=runner, adb_serials=lambda: [])
+    assert mgr.clone("farm05", 0) == 3
+    assert ["copy", "--name", "farm05", "--from", "0"] in runner.calls
+
+
+def test_clone_prefers_matching_name_among_new() -> None:
+    runner = SequencedRunner(
+        "0,template,1,1,0,1,1",
+        "0,template,1,1,0,1,1\n3,khac,1,1,0,1,1\n4,farm05,1,1,0,1,1",
+    )
+    mgr = LDPlayerManager("ldconsole.exe", runner=runner, adb_serials=lambda: [])
+    assert mgr.clone("farm05", 0) == 4
+
+
+def test_clone_fails_when_nothing_new() -> None:
+    runner = SequencedRunner("0,template,1,1,0,1,1", "0,template,1,1,0,1,1")
+    mgr = LDPlayerManager("ldconsole.exe", runner=runner, adb_serials=lambda: [])
+    with pytest.raises(LDConsoleError, match="cannot identify"):
+        mgr.clone("farm05", 0)

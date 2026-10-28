@@ -43,26 +43,15 @@ from vhtk.core.errors import VerifyFailed
 from vhtk.core.fsm import TaskContext
 from vhtk.core.recovery import Recovery
 from vhtk.core.safety import Safety
-from vhtk.core.vision import Image, TemplateStore, Vision, best_match
+from vhtk.core.vision import Image, TemplateStore, Vision
 from vhtk.logging_setup import setup_logging
 from vhtk.mapcal import fit_transform, max_residual
+from vhtk.mapstore import MapStore, maps_dir
 from vhtk.notify import NullNotifier
 from vhtk.tasks.navigate import Navigator
 
 log = structlog.get_logger(__name__)
 
-# Dòng danh sách khớp crop đã quét tới mức này thì coi là đúng map.
-# So khớp trên MẶT NẠ CHỮ (nhị phân > 200): dòng đang chọn có nền highlight
-# còn crop đã quét thì không — match màu thẳng tụt về ~0.31 (đo 27/10),
-# match mặt nạ chữ cho 1.00 có mặt / ~0.37 vắng mặt
-ROW_MATCH_THRESHOLD = 0.85
-ROW_TEXT_BIN_THRESHOLD = 200
-
-
-def text_mask(img: Image) -> Image:
-    """Binary mask of the bright row text (background/highlight removed)."""
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    return cv2.threshold(gray, ROW_TEXT_BIN_THRESHOLD, 255, cv2.THRESH_BINARY)[1]
 # Chờ dòng "Đi:" hiện sau khi map đóng
 TRAVEL_TEXT_SETTLE = 0.7
 
@@ -81,45 +70,6 @@ def find_entry(manifest: dict, name: str) -> dict:
         if e["name"] == name:
             return e
     raise SystemExit(f"LOI: map {name!r} khong co trong manifest (chay harvest_maps truoc)")
-
-
-def select_harvested_row(
-    nav: Navigator, vision: Vision, device: Device, out_dir: Path, entry: dict,
-    geom, max_pages: int,
-) -> None:
-    """Scroll the "Tìm map" list until the harvested row crop matches, tap it.
-
-    Xác minh chọn đúng map bằng crop TIÊU ĐỀ đã quét — không cần OCR.
-    """
-    row_tpl = cv2.imread(str(out_dir / entry["files"]["row"]))
-    title_tpl = cv2.imread(str(out_dir / entry["files"]["title"]))
-    lx, ly, lw, lh = geom.rect
-    # game NHỚ vị trí cuộn của danh sách giữa các lần mở map — kéo về đầu
-    # danh sách trước, rồi mới dò xuống. Swipe bắt đầu sát mép trên (y+20)
-    # bị game nuốt (đo 27/10) — bắt đầu từ giữa vùng danh sách
-    x = lx + lw // 2
-    for _ in range(max_pages + 3):
-        device.swipe(x, ly + 60, x, ly + 290, duration_ms=500)
-        time.sleep(0.6)
-    for page in range(max_pages):
-        frame = vision.capture_screen()
-        score, (bx, by, bw, bh) = best_match(
-            text_mask(crop(frame, geom.rect)), text_mask(row_tpl)
-        )
-        if score >= ROW_MATCH_THRESHOLD:
-            device.tap(lx + bx + bw // 2, ly + by + bh // 2)
-            time.sleep(1.3)
-            check = vision.capture_screen()
-            tscore, _ = best_match(crop(check, (300, 30, 360, 34)), title_tpl)
-            if tscore < 0.85:
-                raise SystemExit(f"LOI: tap dong nhung tieu de khong khop (score {tscore:.2f})")
-            log.info("map selected", name=entry["name"], page=page, title_score=round(tscore, 2))
-            return
-        x = lx + lw // 2
-        dy = (geom.visible_rows - 2) * geom.row_pitch
-        device.swipe(x, ly + lh - 20, x, ly + lh - 20 - dy, duration_ms=600)
-        time.sleep(1.2)
-    raise SystemExit(f"LOI: khong tim thay dong {entry['name']!r} sau {max_pages} trang")
 
 
 def grid_points(rect: tuple[int, int, int, int], cols: int, rows: int) -> list[tuple[int, int]]:
@@ -141,11 +91,15 @@ def collect(args: argparse.Namespace) -> int:
         print("LOI: thieu farm.map_list / farm.travel_text_rect trong coordinates.yaml")
         return 1
 
-    out_dir = Path("data/maps") / settings.templates.version
+    out_dir = maps_dir(settings.templates.version)
     manifest = load_manifest(out_dir)
     entry = find_entry(manifest, args.map)
     calib_dir = out_dir / f"{entry['index']:03d}_calib"
     calib_dir.mkdir(exist_ok=True)
+    map_store = MapStore(out_dir)
+    store_entry = map_store.get(args.map)
+    if store_entry is None:
+        raise SystemExit(f"LOI: map {args.map!r} chua co ten/du file trong kho")
 
     store = TemplateStore(settings.templates.root)
     device = Device(account.ldplayer.adb_serial, settings.safety, settings.ldplayer.resolution)
@@ -161,16 +115,14 @@ def collect(args: argparse.Namespace) -> int:
         notifier=notifier, settings=settings, account=account,
         log_dir=settings.logging.dir,
     )
-    nav = Navigator(ctx, coords.farm, settings.farm)
+    farm_cfg = settings.farm.model_copy(update={"map_list_max_pages": args.max_pages})
+    nav = Navigator(ctx, coords.farm, farm_cfg, store=map_store)
 
     samples: list[dict] = []
     try:
         nav.ensure_standing()
         nav.open_map()
-        nav.ensure_find_map_tab()
-        select_harvested_row(
-            nav, vision, device, out_dir, entry, coords.farm.map_list, args.max_pages
-        )
+        nav.select_map_from_store(store_entry)
         for px, py in grid_points(coords.farm.map_image_rect, args.grid_cols, args.grid_rows):
             if len(samples) >= args.max_success:
                 break
@@ -186,12 +138,10 @@ def collect(args: argparse.Namespace) -> int:
             cv2.imwrite(str(calib_dir / fname), crop(frame, coords.farm.travel_text_rect))
             samples.append({"pixel": [px, py], "crop": fname, "game": None})
             log.info("sample captured", pixel=[px, py], n=len(samples))
-            # mở lại màn bản đồ cho điểm kế — map đích vẫn đang được preview
+            # mở lại màn bản đồ cho điểm kế — tiêu đề reset về map hiện tại
+            # nên phải chọn lại map đích từ kho
             nav.open_map()
-            nav.ensure_find_map_tab()
-            select_harvested_row(
-                nav, vision, device, out_dir, entry, coords.farm.map_list, args.max_pages
-            )
+            nav.select_map_from_store(store_entry)
         nav.close_map()
     finally:
         device.close()
@@ -208,7 +158,7 @@ def collect(args: argparse.Namespace) -> int:
 
 def fit(args: argparse.Namespace) -> int:
     settings: Settings = load_settings(Path(args.settings))
-    out_dir = Path("data/maps") / settings.templates.version
+    out_dir = maps_dir(settings.templates.version)
     manifest = load_manifest(out_dir)
     entry = find_entry(manifest, args.map)
     calib_dir = out_dir / f"{entry['index']:03d}_calib"

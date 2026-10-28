@@ -23,6 +23,13 @@ pathfind — the game toasts "Trạng thái hiện tại không thể bắt đ�
 Arrival detection needs no OCR (PaddleOCR is absent on the dev Mac):
 arrived = the red travel indicator is gone AND the HUD map-name template
 matches AND the HUD coordinate line's pixels stay still for N cycles.
+
+Maps WITHOUT a hand-captured ``row_``/``hud_name_`` template pair are driven
+through the harvested map store (``data/maps/<version>/``, see
+``vhtk/mapstore.py``): the row is found by masked-text match on the stored
+row crop (scrolling the list), selection and location are verified against
+the stored TITLE crop — a freshly opened map screen always titles the
+CURRENT map, a previous preview never sticks (verified on the AVD 28/10).
 """
 
 from __future__ import annotations
@@ -37,7 +44,8 @@ import structlog
 from vhtk.config import FarmCoordinates, FarmSettings
 from vhtk.core.errors import StateTimeout, TravelStalled, VerifyFailed
 from vhtk.core.fsm import TaskContext
-from vhtk.core.vision import Image, Match
+from vhtk.core.vision import Image, Match, best_match
+from vhtk.mapstore import MapEntry, MapStore, flexible_match, text_mask
 
 log = structlog.get_logger(__name__)
 
@@ -54,6 +62,12 @@ TPL_AUTO_ON = "map/btn_auto_on"  # nút auto-đánh trên HUD, trạng thái b�
 TPL_AUTO_OFF = "map/btn_auto_off"  # ... trạng thái tắt
 TPL_TAB_FIND_NPC_ON = "shop/tab_find_npc_on"  # tab "Tìm NPC" đang active
 TPL_TAB_FIND_NPC_OFF = "shop/tab_find_npc_off"  # ... chưa active (cần tap)
+
+# Khoảng chờ render của màn bản đồ khi dò danh sách qua kho map (giây) —
+# đo trên AVD 27/10; tách hằng để test monkeypatch về 0
+LIST_TAB_SETTLE = 1.0  # sau khi tap tab "Tìm map"
+LIST_SCROLL_SETTLE = 0.6  # giữa các lượt vuốt kéo về đầu danh sách
+LIST_PAGE_SETTLE = 1.2  # sau khi vuốt sang trang kế
 
 
 def map_slug(name: str) -> str:
@@ -86,10 +100,18 @@ class Navigator:
     coordinates and warn on every use.
     """
 
-    def __init__(self, ctx: TaskContext, coords: FarmCoordinates, cfg: FarmSettings) -> None:
+    def __init__(
+        self,
+        ctx: TaskContext,
+        coords: FarmCoordinates,
+        cfg: FarmSettings,
+        store: MapStore | None = None,
+    ) -> None:
         self.ctx = ctx
         self.coords = coords
         self.cfg = cfg
+        # kho map đã quét — đường điều hướng cho map không có template thủ công
+        self.map_store = store
 
     # -- character state ----------------------------------------------------------
 
@@ -275,14 +297,158 @@ class Navigator:
     def select_map(self, map_name: str) -> None:
         """In the open map screen, pick ``map_name`` in the "Tìm map" list.
 
+        Đường template (map có ``row_<slug>``) đi trước: nhanh, không cần
+        cuộn — map farm quanh thành nằm ngay trang đầu. Map chỉ có trong kho
+        ``data/maps`` thì dò bằng crop dòng tên đã quét (có cuộn trang).
+
         Raises:
             StateTimeout: tab or row not found/clickable in time.
+            VerifyFailed: the map is neither templated nor in the map store.
         """
-        # v1: dòng map phải nhìn thấy được không cần cuộn — map farm nên chọn
-        # trong danh sách map lân cận của thành
-        self._select_row(
-            row_template(map_name), TPL_TAB_FIND_MAP_ON, TPL_TAB_FIND_MAP_OFF, '"Tìm map"'
+        tpl = row_template(map_name)
+        if tpl in self.ctx.vision.store:
+            self._select_row(tpl, TPL_TAB_FIND_MAP_ON, TPL_TAB_FIND_MAP_OFF, '"Tìm map"')
+            return
+        entry = self._store_entry(map_name)
+        self.select_map_from_store(entry)
+
+    def select_map_from_store(self, entry: MapEntry) -> None:
+        """Find & tap a map's row using its harvested crop, scrolling pages.
+
+        Game NHỚ vị trí cuộn của danh sách giữa các lần mở map — thử trang
+        đang hiện trước (đỡ ~15 lượt vuốt khi dòng cần tìm còn trên màn),
+        không thấy mới kéo về đầu danh sách rồi dò xuống từng trang. Chọn
+        xong xác minh bằng crop TIÊU ĐỀ (map vừa chọn thành map được preview).
+
+        Raises:
+            StateTimeout: the row was not found (or every candidate tapped
+                previewed a different title) within ``map_list_max_pages``.
+            VerifyFailed: list geometry/title rect not configured.
+        """
+        geom = self.coords.map_list
+        if geom is None or self.coords.map_title_rect is None:
+            raise VerifyFailed(
+                "farm.map_list / farm.map_title_rect missing in coordinates.yaml — "
+                "required to navigate via the map store"
+            )
+        assert self.map_store is not None  # _store_entry đã bảo đảm
+        row_mask = text_mask(self.map_store.image(entry.row_file))
+        lx, ly, lw, lh = geom.rect
+        x = lx + lw // 2
+        # tab "Tìm map" phải active trước khi đọc danh sách
+        hit = self.ctx.vision.wait_any(
+            [TPL_TAB_FIND_MAP_ON, TPL_TAB_FIND_MAP_OFF], timeout=self.cfg.map_timeout
         )
+        if hit is None:
+            raise StateTimeout('"Tìm map" tab not found on map screen')
+        if hit[0] == TPL_TAB_FIND_MAP_OFF:
+            self.ctx.device.tap(*hit[1].center)
+            time.sleep(LIST_TAB_SETTLE)
+        if self._tap_row_if_visible(entry, row_mask, geom.rect):
+            return
+        # kéo về đầu danh sách: swipe bắt đầu sát mép trên (y+20) bị game
+        # nuốt (đo 27/10) — bắt đầu từ giữa vùng danh sách
+        for _ in range(self.cfg.map_list_max_pages // 2 + 3):
+            self.ctx.safety.check_kill_switch()
+            self.ctx.device.swipe(x, ly + 60, x, ly + 290, duration_ms=500)
+            time.sleep(LIST_SCROLL_SETTLE)
+        prev_crop: Image | None = None
+        for _ in range(self.cfg.map_list_max_pages):
+            self.ctx.safety.check_kill_switch()
+            if self._tap_row_if_visible(entry, row_mask, geom.rect):
+                return
+            crop = self._crop(self.ctx.vision.capture_screen(), geom.rect)
+            if prev_crop is not None and self._frame_diff(prev_crop, crop) < 0.01:
+                # vuốt mà danh sách không đổi = đã chạm đáy, cuộn thêm vô ích
+                break
+            prev_crop = crop
+            # bước NỬA trang: dòng ở mép trang bị cắt cụt match tụt (~0.8),
+            # chồng lấn nửa trang bảo đảm dòng nào cũng có một lần nguyên vẹn
+            dy = (geom.visible_rows // 2) * geom.row_pitch
+            self.ctx.device.swipe(x, ly + lh - 20, x, ly + lh - 20 - dy, duration_ms=600)
+            time.sleep(LIST_PAGE_SETTLE)
+        raise StateTimeout(
+            f"row for {entry.name!r} not found in the map list "
+            f"after {self.cfg.map_list_max_pages} half-page scrolls"
+        )
+
+    def _tap_row_if_visible(
+        self, entry: MapEntry, row_mask: Image, list_rect: tuple[int, int, int, int]
+    ) -> bool:
+        """Tap ``entry``'s row if its crop matches on the current frame.
+
+        Returns True once the row was tapped AND the preview title matches.
+        Tap trúng dòng tên GẦN GIỐNG (tiêu đề preview không khớp) thì trả
+        False để vòng ngoài cuộn tiếp — vòng xác minh tiêu đề là hàng rào
+        chống farm nhầm map, không phải lý do bỏ cả cuộc tìm.
+        """
+        lx, ly, _, _ = list_rect
+        frame = self.ctx.vision.capture_screen()
+        score, (bx, by, bw, bh) = best_match(
+            text_mask(self._crop(frame, list_rect)), row_mask
+        )
+        if score < self.cfg.map_row_match_threshold:
+            return False
+        # danh sách còn TRÔI theo quán tính sau cú vuốt — tap theo vị trí của
+        # khung cũ là trúng dòng bên cạnh (lỗi thực tế AVD 28/10: tap 'Võ Đang'
+        # trúng 'Thiên Sư động-1' ngay dưới). Chờ bbox đứng yên qua 2 khung
+        # liên tiếp rồi mới tap theo vị trí MỚI NHẤT
+        deadline = time.monotonic() + self.cfg.map_timeout
+        while True:
+            frame = self.ctx.vision.capture_screen()
+            score2, (bx2, by2, bw2, bh2) = best_match(
+                text_mask(self._crop(frame, list_rect)), row_mask
+            )
+            if score2 < self.cfg.map_row_match_threshold:
+                return False  # dòng trôi ra khỏi vùng nhìn thấy — dò tiếp
+            if abs(by2 - by) <= 2 and abs(bx2 - bx) <= 2:
+                bx, by, bw, bh = bx2, by2, bw2, bh2
+                break
+            bx, by, bw, bh = bx2, by2, bw2, bh2
+            if time.monotonic() >= deadline:
+                return False  # trôi mãi không dừng — thử lại vòng sau
+            time.sleep(self.cfg.arrive_check_interval)
+        self.ctx.device.tap(lx + bx + bw // 2, ly + by + bh // 2)
+        if not self._wait_title(entry):
+            log.warning(
+                "tapped a similar-looking row, keeping on scanning",
+                map=entry.name, row_score=round(score, 2),
+            )
+            return False
+        log.info("map selected from store", map=entry.name, row_score=round(score, 2))
+        return True
+
+    def _wait_title(self, entry: MapEntry) -> bool:
+        """Poll the map screen's title until it matches ``entry`` (or timeout).
+
+        Vùng crop được NỚI biên vài pixel quanh ``map_title_rect``: crop kho
+        và tiêu đề thật có thể lệch nhau 1-2px, match hai ảnh cùng cỡ không
+        có chỗ trượt nên lệch là rớt oan (lỗi thực tế AVD 28/10).
+        """
+        assert self.map_store is not None and self.coords.map_title_rect is not None
+        title = self.map_store.image(entry.title_file)
+        tx, ty, tw, th = self.coords.map_title_rect
+        pad = 8
+        rect = (max(0, tx - pad), max(0, ty - pad), tw + 2 * pad, th + 2 * pad)
+        deadline = time.monotonic() + self.cfg.map_timeout
+        while True:
+            frame = self.ctx.vision.capture_screen()
+            crop = self._crop(frame, rect)
+            if flexible_match(crop, title) >= self.cfg.map_title_match_threshold:
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(self.cfg.arrive_check_interval)
+
+    def _store_entry(self, map_name: str) -> MapEntry:
+        entry = self.map_store.get(map_name) if self.map_store is not None else None
+        if entry is None:
+            raise VerifyFailed(
+                f"map {map_name!r}: no row/hud_name templates and not in the map "
+                "store — capture templates (tools/capture.py) or harvest the map "
+                "list (tools/harvest_maps.py)"
+            )
+        return entry
 
     def select_npc(self, row_template: str) -> None:
         """In the open map screen, tap an NPC row in the "Tìm NPC" list.
@@ -424,11 +590,71 @@ class Navigator:
 
     # -- position checks ---------------------------------------------------------
 
-    def in_map(self, map_name: str, frame: Image | None = None) -> bool:
-        """True if the HUD map name matches ``map_name`` (template, no OCR)."""
+    def in_map(self, map_name: str, frame: Image | None = None) -> bool | None:
+        """Cheap per-frame location check via the HUD map-name template.
+
+        Returns:
+            True/False khi template ``hud_name_<slug>`` có trong bộ template;
+            ``None`` = map chỉ có trong kho (không có template HUD) — khung
+            hình đơn lẻ KHÔNG đọc được vị trí, caller muốn chắc thì dùng
+            :meth:`confirm_in_map` (đắt hơn: mở/đóng màn bản đồ).
+        """
         tpl = hud_name_template(map_name)
-        self._require_templates(tpl)
+        if tpl not in self.ctx.vision.store:
+            return None
         return self.ctx.vision.find(tpl, screenshot=frame) is not None
+
+    def confirm_in_map(self, map_name: str) -> bool:
+        """Strong current-map check that works without a HUD template.
+
+        Có template HUD thì dùng luôn (rẻ). Không có thì mở màn bản đồ MỚI
+        và so crop tiêu đề với kho: tiêu đề của màn vừa mở luôn là map HIỆN
+        TẠI, preview của lần trước không dính lại (kiểm chứng AVD 28/10).
+        Màn bản đồ được đóng lại trước khi trả kết quả.
+
+        Raises:
+            VerifyFailed: map không có cả template HUD lẫn mục trong kho,
+                hoặc thiếu ``map_title_rect``; StateTimeout từ open_map.
+        """
+        quick = self.in_map(map_name)
+        if quick is not None:
+            return quick
+        entry = self._store_entry(map_name)
+        if self.coords.map_title_rect is None:
+            raise VerifyFailed(
+                "farm.map_title_rect missing in coordinates.yaml — required to "
+                "verify location via the map store"
+            )
+        # tiêu đề chỉ đáng tin trên màn bản đồ mở MỚI — màn đang mở có thể
+        # còn dính preview của thao tác trước
+        if self.map_is_open():
+            self.close_map()
+        self.open_map()
+        try:
+            ok = self._wait_title(entry)
+        finally:
+            self.close_map()
+        log.info("location checked via map title", map=map_name, in_map=ok)
+        return ok
+
+    def map_requirements_missing(self, map_name: str) -> list[str]:
+        """What is missing to navigate to & verify ``map_name``.
+
+        Đủ điều kiện khi: có cặp template ``row_``/``hud_name_``, HOẶC map có
+        trong kho ``data/maps`` kèm toạ độ ``map_list``/``map_title_rect``.
+        Trả về danh sách mô tả thứ còn thiếu (rỗng = chạy được).
+        """
+        missing = self.missing_templates(row_template(map_name), hud_name_template(map_name))
+        if not missing:
+            return []
+        if self.map_store is not None and map_name in self.map_store:
+            needed = []
+            if self.coords.map_list is None:
+                needed.append("farm.map_list (coordinates.yaml)")
+            if self.coords.map_title_rect is None:
+                needed.append("farm.map_title_rect (coordinates.yaml)")
+            return needed
+        return [f"{m} (hoặc quét kho map: tools/harvest_maps.py)" for m in missing]
 
     def wait_arrival(self, map_name: str) -> None:
         """Wait until the character stands still inside ``map_name``.
@@ -437,6 +663,11 @@ class Navigator:
         template exists) AND the HUD map name matches AND the HUD coordinate
         line's pixels stayed unchanged for ``arrive_stable_cycles``
         consecutive checks.
+
+        Map không có template HUD (chỉ có trong kho): tới ngưỡng ổn định thì
+        xác minh MỘT LẦN bằng :meth:`confirm_in_map` (mở/đóng màn bản đồ so
+        tiêu đề); sai map thì đòi một chuỗi ổn định MỚI rồi mới thử lại —
+        không mở bản đồ dồn dập mỗi chu kỳ.
 
         Raises:
             TravelStalled: the character stood still ``travel_stall_cycles``
@@ -449,6 +680,7 @@ class Navigator:
         check_indicator = TPL_TRAVEL_INDICATOR in self.ctx.vision.store
         deadline = time.monotonic() + self.cfg.travel_timeout
         stable = 0
+        title_misses = 0
         prev: Image | None = None
         while time.monotonic() < deadline:
             self.ctx.safety.check_kill_switch()
@@ -463,7 +695,23 @@ class Navigator:
                 self.ctx.vision.find(TPL_TRAVEL_INDICATOR, screenshot=frame) is not None
             )
             if stable >= self.cfg.arrive_stable_cycles and not still_travelling:
-                if self.in_map(map_name, frame=frame):
+                here = self.in_map(map_name, frame=frame)
+                if here is None:
+                    # không có template HUD — xác minh đắt (mở/đóng bản đồ)
+                    # một lần cho cả chuỗi ổn định này; sai map thì đòi một
+                    # chuỗi ổn định MỚI (confirm làm khung so pixel cũ hết
+                    # giá trị), 2 lần sai liên tiếp = đứng im ngoài map đích
+                    here = self.confirm_in_map(map_name)
+                    prev = None
+                    if not here:
+                        stable = 0
+                        title_misses += 1
+                        if title_misses >= 2:
+                            raise TravelStalled(
+                                f"character stopped outside {map_name!r} "
+                                "(map title mismatch twice)"
+                            )
+                if here:
                     log.info("arrived", map=map_name)
                     return
                 if stable >= self.cfg.travel_stall_cycles:

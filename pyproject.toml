@@ -19,6 +19,7 @@ dependencies = [
     "fastapi>=0.111",
     "uvicorn>=0.30",
     "ruamel.yaml>=0.18",
+    "psutil>=5.9",
 ]
 
 [project.optional-dependencies]
@@ -58,7 +59,7 @@ packages = ["vhtk"]
 strict = true
 # Các thư viện chưa có type stub đầy đủ
 [[tool.mypy.overrides]]
-module = ["adbutils.*", "cv2.*", "paddleocr.*", "ruamel.*", "webview.*"]
+module = ["adbutils.*", "cv2.*", "paddleocr.*", "ruamel.*", "webview.*", "psutil.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

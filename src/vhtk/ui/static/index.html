@@ -141,6 +141,7 @@
     </div>
     <nav class="tabs">
       <button id="tabAcc" class="on">Tài khoản</button>
+      <button id="tabDev">Thiết bị</button>
       <button id="tabSkill">Chiêu</button>
       <button id="tabSafe">An toàn</button>
     </nav>
@@ -215,7 +216,7 @@ async function refreshList(keep = true) {
       ? `<span class="nm">${a.stem}</span><span class="meta">file lỗi — mở để xem</span>`
       : `<span class="role ${a.role}">${a.role}</span><span class="nm">${a.name}</span>
          <span class="meta">${a.adb_serial} · máy #${a.ldplayer_index}</span>`;
-    b.onclick = () => { tab = "acc"; openAccount(a.stem); };
+    b.onclick = () => switchTab("acc", () => openAccount(a.stem));
     list.appendChild(b);
   }
   if (!keep || (current && !accounts.some((a) => a.stem === current))) current = null;
@@ -278,7 +279,7 @@ function renderAccount(acc, maps) {
     </fieldset>
     <fieldset><legend>Farm</legend>
       <div class="row">
-        ${mapSelect("Map farm", "farm.map", acc.farm.map, maps, "chỉ liệt kê map đã có đủ template; muốn thêm map mới thì chụp cặp template row/hud_name")}
+        ${mapSelect("Map farm", "farm.map", acc.farm.map, maps, "toàn bộ map trong kho đã quét (tools/harvest_maps.py) + map có template thủ công")}
         <label><span>Điểm tap trên ảnh bản đồ — farm (pixel X / Y)</span>
           <span class="row" style="gap:8px">
             <input data-path="farm.spot.0" type="number" value="${acc.farm.spot[0]}">
@@ -554,6 +555,67 @@ async function renderSkills() {
   };
 }
 
+/* ---- tab Thiết bị (worker theo từng tài khoản — W2) ---- */
+let devTimer = null;
+// thông báo thao tác gần nhất — giữ qua các lần tự làm mới (re-render xoá DOM)
+let devMsg = "", devMsgErr = false;
+
+async function renderWorkers() {
+  const rows = await api("GET", "/api/workers");
+  const fmt = (w) => {
+    if (w.error) return `<span style="color:var(--red)">file lỗi</span>`;
+    if (!w.running) return `<span style="color:var(--ink-dim)">dừng</span>`;
+    const st = w.state || {};
+    const where = st.task ? ` — ${st.task}/${st.state || "?"}` : "";
+    return `<span style="color:var(--jade)">đang chạy</span>`
+      + `<span class="meta" style="font-family:var(--mono)"> pid ${w.pid}${where}</span>`;
+  };
+  const items = rows.map((w) => `
+    <fieldset style="margin-bottom:12px">
+      <div class="row" style="align-items:center">
+        <div style="flex:2">
+          <b>${w.name || w.stem}</b>
+          <span class="meta" style="display:block; color:var(--ink-dim); font-family:var(--mono); font-size:12.5px">
+            ${w.stem}.yaml · ${w.adb_serial || "?"} · máy #${w.ldplayer_index ?? "?"}</span>
+        </div>
+        <div style="flex:2">${fmt(w)}</div>
+        <div style="flex:3; display:flex; gap:8px; justify-content:flex-end">
+          ${w.running
+            ? `<button class="btn" data-op="restart" data-stem="${w.stem}">Chạy lại</button>
+               <button class="btn danger" data-op="stop" data-stem="${w.stem}">Dừng</button>`
+            : `<button class="btn gold" data-op="start" data-stem="${w.stem}">Mở &amp; đăng nhập</button>
+               <button class="btn" data-op="provision" data-stem="${w.stem}" title="Nhân bản instance LDPlayer mẫu cho acc này (chỉ trên server Windows)">Cấp máy mới</button>`}
+        </div>
+      </div>
+    </fieldset>`).join("");
+  $("#main").innerHTML = `
+  <div class="page" style="max-width:760px">
+    <h2>Thiết bị &amp; worker</h2>
+    <p class="lead">Mỗi tài khoản một tiến trình worker riêng (<code>python -m vhtk.worker</code>).
+    "Dừng" tạo kill-switch <code>STOP.&lt;acc&gt;</code> — worker dừng sạch ở điểm an toàn,
+    các worker khác không bị ảnh hưởng. Tự làm mới mỗi 5 giây.</p>
+    <div id="workerMsg" class="msg" style="color:${devMsgErr ? "var(--red)" : "var(--ink-dim)"}; margin-bottom:12px">${devMsg}</div>
+    ${items || '<p class="lead">Chưa có tài khoản nào — tạo ở tab Tài khoản trước.</p>'}
+  </div>`;
+  const setMsg = (text, isErr) => {
+    devMsg = text; devMsgErr = !!isErr;
+    const el = $("#workerMsg");
+    if (el) { el.textContent = text; el.style.color = isErr ? "var(--red)" : "var(--ink-dim)"; }
+  };
+  for (const btn of document.querySelectorAll("[data-op]"))
+    btn.onclick = async () => {
+      const { op, stem } = btn.dataset;
+      if (op === "stop" && !confirm(`Dừng worker ${stem}? (dừng sạch ở điểm an toàn, có thể mất tới 2 phút)`)) return;
+      btn.disabled = true;
+      setMsg(`Đang ${op === "stop" ? "dừng" : "khởi động"} ${stem}... (mở máy + đăng nhập có thể mất vài phút)`);
+      try {
+        const r = await api("POST", `/api/workers/${stem}/${op}`);
+        setMsg(`${stem}: ${r.status}${r.pid ? ` (pid ${r.pid})` : ""} ✓`);
+      } catch (e) { setMsg(`${stem}: ${errText(e)}`, true); }
+      if (tab === "dev") renderWorkers().catch(renderError);
+    };
+}
+
 /* ---- tab An toàn ---- */
 function sealFor(s) {
   if (s.dry_run) return ["safe", "Chạy khô (dry run)",
@@ -635,11 +697,20 @@ function renderError(e) {
     <p>Hay gặp nhất: app quản lý đang chạy bằng phiên bản cũ — chạy lại bằng
     <code>./vhtk restart</code> rồi tải lại trang này.</p></div>`;
 }
-$("#tabAcc").onclick = () => { tab = "acc"; paintTabs(); current ? openAccount(current) : renderEmpty(); };
-$("#tabSkill").onclick = () => { tab = "skill"; paintTabs(); renderSkills().catch(renderError); };
-$("#tabSafe").onclick = () => { tab = "safe"; paintTabs(); renderSafety().catch(renderError); };
+function switchTab(name, render) {
+  tab = name; paintTabs();
+  if (devTimer) { clearInterval(devTimer); devTimer = null; }
+  render();
+  if (name === "dev")
+    devTimer = setInterval(() => { if (tab === "dev") renderWorkers().catch(() => {}); }, 5000);
+}
+$("#tabAcc").onclick = () => switchTab("acc", () => current ? openAccount(current) : renderEmpty());
+$("#tabDev").onclick = () => switchTab("dev", () => renderWorkers().catch(renderError));
+$("#tabSkill").onclick = () => switchTab("skill", () => renderSkills().catch(renderError));
+$("#tabSafe").onclick = () => switchTab("safe", () => renderSafety().catch(renderError));
 function paintTabs() {
   $("#tabAcc").classList.toggle("on", tab === "acc");
+  $("#tabDev").classList.toggle("on", tab === "dev");
   $("#tabSkill").classList.toggle("on", tab === "skill");
   $("#tabSafe").classList.toggle("on", tab === "safe");
 }

@@ -19,7 +19,7 @@ if [ ! -x "$PY" ]; then
   exit 1
 fi
 
-runner_pids() { pgrep -f "tools/run_farm.py" | tr '\n' ' ' | sed 's/ $//' || true; }
+runner_pids() { pgrep -f "vhtk.worker|tools/run_farm.py" | tr '\n' ' ' | sed 's/ $//' || true; }
 ui_pids() { pgrep -f "vhtk.ui" | tr '\n' ' ' | sed 's/ $//' || true; }
 
 status() {
@@ -35,7 +35,7 @@ start() {
     # mỗi thiết bị CHỈ một runner — 2 bản giành nhau màn hình là loạn thao tác
     echo "runner đã chạy rồi (pid $(runner_pids)) — dùng './vhtk restart' nếu muốn chạy lại"
   else
-    nohup "$PY" tools/run_farm.py --account "$ACCOUNT" >> logs/runner.out 2>&1 &
+    nohup "$PY" -m vhtk.worker --account "$ACCOUNT" >> logs/runner.out 2>&1 &
     echo "runner: đã chạy nền (pid $!, account $ACCOUNT, log logs/runner.out)"
   fi
   if [ -n "$(ui_pids)" ]; then
@@ -56,7 +56,7 @@ stop() {
     done
     if [ -n "$(runner_pids)" ]; then
       echo "runner không tự dừng, buộc dừng (kill)"
-      pkill -f "tools/run_farm.py" || true
+      pkill -f "vhtk.worker|tools/run_farm.py" || true
       wait_gone runner_pids
     fi
     rm -f STOP

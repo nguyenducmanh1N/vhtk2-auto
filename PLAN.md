@@ -274,8 +274,13 @@ thì tự mở bind + đặt token trong settings). Giao diện đặt tại `sr
 
 ### W2 — Orchestrator đa instance
 
-- Bọc N `AccountWorker` (từ 5b) thành thread riêng mỗi instance; `ldconsole launch`
-  → đợi boot → gán serial theo account config.
+- **Mô hình worker (chốt 2026-10-28, phương án A): mỗi acc một TIẾN TRÌNH riêng**
+  (`python -m vhtk.worker --account <yaml>`) — cô lập tuyệt đối (crash/kẹt OCR một
+  acc không kéo acc khác), restart đúng worker = kill + spawn lại PID trong registry.
+  Orchestrator/GUI đọc trạng thái qua file `logs/workers/<stem>.state.json` worker
+  tự ghi mỗi lần đổi state (không IPC trực tiếp).
+- Supervisor: `ldconsole launch` → đợi boot (`sys.boot_completed`) → resolve serial
+  (ghi ngược YAML nếu lệch) → spawn worker.
 - Instance main **on-demand**: hàng đợi yêu cầu chuyển vàng/đồ; gom nhiều acc đạt
   ngưỡng gần nhau vào 1 lần mở main; `max_concurrent_instances` (mặc định 5) — mở
   main khi kín slot thì tạm dừng 1 worker farm ở state an toàn.

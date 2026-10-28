@@ -12,6 +12,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import cast
 
+import cv2
 import numpy as np
 import pytest
 
@@ -29,7 +30,9 @@ from vhtk.core.fsm import TaskContext, TaskStatus
 from vhtk.core.recovery import Recovery, RecoveryOutcome
 from vhtk.core.safety import Safety
 from vhtk.core.vision import Match, Vision, VisionError, bar_fill_percent
+from vhtk.mapstore import MapStore
 from vhtk.notify import NullNotifier
+from vhtk.tasks import navigate as navigate_mod
 from vhtk.tasks.farm import (
     TPL_AUTO_OFF,
     TPL_AUTO_ON,
@@ -141,6 +144,7 @@ class WorldDevice:
 
     def __init__(self, on_tap: Callable[[int, int], None] | None = None) -> None:
         self.taps: list[tuple[int, int]] = []
+        self.swipes: list[tuple[int, int, int, int]] = []
         self.texts: list[str] = []
         self.deletes: list[int] = []
         self.backs = 0
@@ -150,6 +154,9 @@ class WorldDevice:
         self.taps.append((x, y))
         if self._on_tap:
             self._on_tap(x, y)
+
+    def swipe(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300) -> None:
+        self.swipes.append((x1, y1, x2, y2))
 
     def input_text(self, text: str) -> None:
         self.texts.append(text)
@@ -460,8 +467,215 @@ def test_select_map_missing_row_template_raises(tmp_path: Path) -> None:
     vision = WorldVision(present={TPL_TAB_FIND_MAP_ON}, store_names={TPL_TAB_FIND_MAP_ON,
                                                                      TPL_TAB_FIND_MAP_OFF})
     nav = nav_for(tmp_path, vision, WorldDevice())
-    with pytest.raises(VerifyFailed, match="missing templates"):
+    with pytest.raises(VerifyFailed, match="not in the map store"):
         nav.select_map(FARM_MAP)
+
+
+# ---------------------------------------------------------------------------
+# Navigator qua KHO map (map không có template row_/hud_name_)
+# ---------------------------------------------------------------------------
+
+STORE_MAP = "Dã Trư lâm"  # cố ý không có template nào trong ALL_TEMPLATES
+COORDS = load_coordinates(REPO_ROOT / "config" / "coordinates.yaml").farm
+
+
+def _pattern(seed: int, h: int, w: int) -> np.ndarray:
+    """Deterministic bright-blocks image — ảnh "chữ" tổng hợp để match.
+
+    Vị trí/kích thước block lấy từ RNG theo seed để hai seed khác nhau không
+    thể khớp kể cả khi matchTemplate trượt ngang (block cách đều từng khớp giả).
+    """
+    rng = np.random.default_rng(seed)
+    img = np.full((h, w, 3), 30, dtype=np.uint8)
+    for _ in range(8):
+        x = int(rng.integers(0, w - 10))
+        y0 = int(rng.integers(1, max(2, h // 2)))
+        y1 = int(rng.integers(h // 2 + 1, h - 1))
+        img[y0:y1, x : x + int(rng.integers(3, 10))] = 255
+    return img
+
+
+def build_map_store(tmp_path: Path, title_seed: int = 2) -> MapStore:
+    import yaml as pyyaml
+
+    root = tmp_path / "maps"
+    root.mkdir(exist_ok=True)
+    _, _, _, th = COORDS.map_title_rect or (0, 0, 0, 26)
+    images = {
+        "000_map.png": _pattern(9, 50, 50),
+        "000_row.png": _pattern(1, 24, 180),
+        "000_title.png": _pattern(title_seed, th, 200),
+    }
+    for fname, img in images.items():
+        cv2.imwrite(str(root / fname), img)
+    manifest = {"maps": [{"index": 0, "name": STORE_MAP, "page": 0,
+                          "files": {"map": "000_map.png", "row": "000_row.png",
+                                    "title": "000_title.png"}}]}
+    (root / "manifest.yaml").write_text(
+        pyyaml.safe_dump(manifest, allow_unicode=True), encoding="utf-8"
+    )
+    return MapStore(root)
+
+
+def store_frame(*, row: bool = False, title: bool = False,
+                title_seed: int = 2) -> np.ndarray:
+    """A HUD-black frame with the store row/title pattern pasted in place."""
+    frame = np.zeros((540, 960, 3), dtype=np.uint8)
+    if row:
+        lx, ly, _, _ = (COORDS.map_list.rect if COORDS.map_list else (95, 140, 215, 350))
+        frame[ly + 60 : ly + 84, lx + 5 : lx + 185] = _pattern(1, 24, 180)
+    if title:
+        tx, ty, _, th = COORDS.map_title_rect or (360, 34, 240, 26)
+        frame[ty : ty + th, tx : tx + 200] = _pattern(title_seed, th, 200)
+    return frame
+
+
+@pytest.fixture()
+def no_list_settle(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(navigate_mod, "LIST_TAB_SETTLE", 0.0)
+    monkeypatch.setattr(navigate_mod, "LIST_SCROLL_SETTLE", 0.0)
+    monkeypatch.setattr(navigate_mod, "LIST_PAGE_SETTLE", 0.0)
+
+
+def nav_with_store(tmp_path: Path, vision: WorldVision, device: WorldDevice,
+                   title_seed: int = 2) -> Navigator:
+    ctx = make_ctx(tmp_path, vision, device)
+    farm_cfg = ctx.settings.farm.model_copy(update={"map_list_max_pages": 2})
+    return Navigator(ctx, COORDS, farm_cfg, store=build_map_store(tmp_path, title_seed))
+
+
+def in_list_rect(xy: tuple[int, int]) -> bool:
+    assert COORDS.map_list is not None
+    lx, ly, lw, lh = COORDS.map_list.rect
+    return lx <= xy[0] <= lx + lw and ly <= xy[1] <= ly + lh
+
+
+def test_select_map_from_store_taps_row_and_verifies_title(
+    tmp_path: Path, no_list_settle: None
+) -> None:
+    vision = WorldVision(present={TPL_TAB_FIND_MAP_ON}, frame=store_frame(row=True))
+
+    def on_tap(x: int, y: int) -> None:
+        # tap trúng dòng -> game preview map, tiêu đề đổi theo
+        vision.frame = store_frame(row=True, title=True)
+
+    device = WorldDevice(on_tap=on_tap)
+    nav = nav_with_store(tmp_path, vision, device)
+    nav.select_map(STORE_MAP)
+    assert len(device.taps) == 1 and in_list_rect(device.taps[0])
+    assert device.swipes == []  # dòng hiện sẵn trên trang — không phải cuộn
+
+
+def test_select_map_from_store_scrolls_until_row_found(
+    tmp_path: Path, no_list_settle: None
+) -> None:
+    # trang đang mở KHÔNG có dòng -> kéo về đầu rồi dò trang; trang thứ 2 có
+    vision = WorldVision(
+        present={TPL_TAB_FIND_MAP_ON},
+        frames=[store_frame(), store_frame(), store_frame(row=True)],
+    )
+
+    def on_tap(x: int, y: int) -> None:
+        vision.frame = store_frame(row=True, title=True)
+        vision.frames = []
+
+    device = WorldDevice(on_tap=on_tap)
+    nav = nav_with_store(tmp_path, vision, device)
+    nav.select_map(STORE_MAP)
+    assert device.swipes  # đã phải cuộn
+    assert len(device.taps) == 1 and in_list_rect(device.taps[0])
+
+
+def test_select_map_from_store_row_never_found_times_out(
+    tmp_path: Path, no_list_settle: None
+) -> None:
+    vision = WorldVision(present={TPL_TAB_FIND_MAP_ON}, frame=store_frame())
+    nav = nav_with_store(tmp_path, vision, WorldDevice())
+    with pytest.raises(StateTimeout, match="not found in the map list"):
+        nav.select_map(STORE_MAP)
+
+
+def test_select_map_from_store_wrong_title_keeps_scanning(
+    tmp_path: Path, no_list_settle: None
+) -> None:
+    """Tap trúng một dòng nhưng tiêu đề preview không khớp map muốn chọn
+    (dòng tên gần giống) — phải cuộn tìm tiếp chứ không nhận bừa; hết danh
+    sách vẫn không có thì StateTimeout, tuyệt đối không farm nhầm map."""
+    vision = WorldVision(present={TPL_TAB_FIND_MAP_ON}, frame=store_frame(row=True))
+
+    def on_tap(x: int, y: int) -> None:
+        vision.frame = store_frame(row=True, title=True, title_seed=5)  # tiêu đề map KHÁC
+
+    device = WorldDevice(on_tap=on_tap)
+    nav = nav_with_store(tmp_path, vision, device)
+    with pytest.raises(StateTimeout, match="not found in the map list"):
+        nav.select_map(STORE_MAP)
+    assert device.swipes  # đã cuộn tìm tiếp sau cú tap hụt
+
+
+class TitleWorld:
+    """World for confirm_in_map: minimap tap opens the map screen (title =
+    CURRENT map — probe AVD 28/10), X button closes it."""
+
+    def __init__(self, vision: WorldVision, title_seed: int) -> None:
+        self.vision = vision
+        self.title_seed = title_seed
+
+    def on_tap(self, x: int, y: int) -> None:
+        if (x, y) == COORDS.minimap:
+            self.vision.present.add(TPL_BTN_CONFIRM_COORDS)
+            self.vision.frame = store_frame(title=True, title_seed=self.title_seed)
+        elif (x, y) == (20, 20):  # tâm Match của nút X trong WorldVision
+            self.vision.present.discard(TPL_BTN_CONFIRM_COORDS)
+            self.vision.frame = store_frame()
+
+
+def test_confirm_in_map_matches_title_and_closes_map(tmp_path: Path) -> None:
+    vision = WorldVision(present={TPL_BTN_CLOSE_MAP}, frame=store_frame())
+    world = TitleWorld(vision, title_seed=2)
+    nav = nav_with_store(tmp_path, vision, WorldDevice(on_tap=world.on_tap))
+    assert nav.confirm_in_map(STORE_MAP) is True
+    assert TPL_BTN_CONFIRM_COORDS not in vision.present  # bản đồ đã đóng lại
+
+
+def test_confirm_in_map_wrong_title_returns_false(tmp_path: Path) -> None:
+    vision = WorldVision(present={TPL_BTN_CLOSE_MAP}, frame=store_frame())
+    world = TitleWorld(vision, title_seed=5)  # đang đứng ở map khác
+    nav = nav_with_store(tmp_path, vision, WorldDevice(on_tap=world.on_tap))
+    assert nav.confirm_in_map(STORE_MAP) is False
+    assert TPL_BTN_CONFIRM_COORDS not in vision.present
+
+
+def test_in_map_returns_none_without_hud_template(tmp_path: Path) -> None:
+    nav = nav_with_store(tmp_path, WorldVision(present=set()), WorldDevice())
+    assert nav.in_map(STORE_MAP) is None
+
+
+def test_wait_arrival_store_map_arrives_via_title(tmp_path: Path) -> None:
+    vision = WorldVision(present={TPL_BTN_CLOSE_MAP}, frame=store_frame())
+    world = TitleWorld(vision, title_seed=2)
+    nav = nav_with_store(tmp_path, vision, WorldDevice(on_tap=world.on_tap))
+    nav.wait_arrival(STORE_MAP)  # khung đứng yên -> confirm tiêu đề -> arrived
+
+
+def test_wait_arrival_store_map_title_mismatch_twice_stalls(tmp_path: Path) -> None:
+    vision = WorldVision(present={TPL_BTN_CLOSE_MAP}, frame=store_frame())
+    world = TitleWorld(vision, title_seed=5)  # dừng hẳn nhưng ở map KHÁC
+    nav = nav_with_store(tmp_path, vision, WorldDevice(on_tap=world.on_tap))
+    with pytest.raises(TravelStalled, match="title mismatch twice"):
+        nav.wait_arrival(STORE_MAP)
+
+
+def test_map_requirements_missing_prefers_templates_then_store(tmp_path: Path) -> None:
+    # có đủ cặp template -> không thiếu gì, kho không cần
+    nav_tpl = nav_for(tmp_path, WorldVision(present=set()), WorldDevice())
+    assert nav_tpl.map_requirements_missing(FARM_MAP) == []
+    # không template nhưng map có trong kho + đủ toạ độ -> cũng chạy được
+    nav_store = nav_with_store(tmp_path, WorldVision(present=set()), WorldDevice())
+    assert nav_store.map_requirements_missing(STORE_MAP) == []
+    # không template, không kho -> thiếu, kèm gợi ý quét kho
+    missing = nav_tpl.map_requirements_missing(STORE_MAP)
+    assert missing and all("harvest" in m for m in missing)
 
 
 def test_resolve_spot_default_is_map_image_center(tmp_path: Path) -> None:

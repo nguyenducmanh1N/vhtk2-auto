@@ -139,3 +139,24 @@ def test_kill_switch_blocks_guard(tmp_path: Path) -> None:
         safety.guard_irreversible("sell_item", "x")
     with pytest.raises(KillSwitchTriggered):
         safety.check_kill_switch()
+
+
+def test_per_account_kill_switch(tmp_path: Path) -> None:
+    """STOP.<stem> dừng đúng worker đó; STOP toàn cục dừng mọi worker."""
+    cfg = make_cfg()
+    n = StubNotifier()
+    safety = Safety(
+        cfg, n, evidence_dir=tmp_path / "d", kill_switch_path=tmp_path / "STOP", stem="farm01"
+    )
+    other = Safety(
+        cfg, n, evidence_dir=tmp_path / "d", kill_switch_path=tmp_path / "STOP", stem="farm02"
+    )
+    safety.check_kill_switch()  # chưa có file -> không nổ
+    (tmp_path / "STOP.farm01").touch()
+    with pytest.raises(KillSwitchTriggered):
+        safety.check_kill_switch()
+    other.check_kill_switch()  # worker khác không bị ảnh hưởng
+    (tmp_path / "STOP.farm01").unlink()
+    (tmp_path / "STOP").touch()  # file toàn cục chặn tất cả
+    with pytest.raises(KillSwitchTriggered):
+        other.check_kill_switch()

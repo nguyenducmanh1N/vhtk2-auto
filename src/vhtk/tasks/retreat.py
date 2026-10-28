@@ -27,6 +27,7 @@ from vhtk.core.errors import (
 )
 from vhtk.core.fsm import ABORT, DONE, BaseTask, State, TaskContext
 from vhtk.core.vision import bar_fill_percent
+from vhtk.mapstore import MapStore, maps_dir
 from vhtk.tasks.farm import TPL_HUD
 from vhtk.tasks.navigate import (
     TPL_AUTO_OFF,
@@ -37,8 +38,6 @@ from vhtk.tasks.navigate import (
     TPL_TAB_FIND_MAP_OFF,
     TPL_TAB_FIND_MAP_ON,
     Navigator,
-    hud_name_template,
-    row_template,
 )
 
 log = structlog.get_logger(__name__)
@@ -62,7 +61,8 @@ class RetreatTask(BaseTask):
             raise TaskDefinitionError("RetreatTask requires ctx.account")
         self._farm = ctx.account.farm
         coords: Coordinates = load_coordinates(ctx.settings.paths.coordinates_file)
-        self._nav = Navigator(ctx, coords.farm, ctx.settings.farm)
+        store = MapStore(maps_dir(ctx.settings.templates.version))
+        self._nav = Navigator(ctx, coords.farm, ctx.settings.farm, store=store)
         self._hp_rect = coords.farm.hp_bar_rect
         self._nav_attempts = 0
         super().__init__(ctx)
@@ -112,12 +112,12 @@ class RetreatTask(BaseTask):
             TPL_TAB_FIND_MAP_OFF,
             TPL_AUTO_ON,
             TPL_AUTO_OFF,
-            hud_name_template(self._farm.retreat_map),
-            row_template(self._farm.retreat_map),
         )
+        # map rút về: cần cặp template row/hud_name HOẶC mục trong kho data/maps
+        missing += self._nav.map_requirements_missing(self._farm.retreat_map)
         if missing:
             log.error(
-                "retreat templates missing — capture them with tools/capture.py",
+                "retreat prerequisites missing — capture templates or harvest maps",
                 missing=missing,
             )
             return ABORT
@@ -158,8 +158,12 @@ class RetreatTask(BaseTask):
         except VerifyFailed:
             # tap điểm đến trùng/sát chỗ đang đứng thì game LỜ ĐI và map cứ
             # mở (lỗi thực tế 26/10: login xong spawn ngay điểm nghỉ) — đã
-            # ở trong map thành thì nghỉ tại chỗ là đủ an toàn
-            if self._nav.in_map(self._farm.retreat_map):
+            # ở trong map thành thì nghỉ tại chỗ là đủ an toàn. Map từ kho
+            # (in_map=None): confirm tự đóng map rồi mở MỚI so tiêu đề
+            here = self._nav.in_map(self._farm.retreat_map)
+            if here is None:
+                here = self._nav.confirm_in_map(self._farm.retreat_map)
+            if here:
                 log.info("already in retreat map, resting in place")
                 self._nav.close_map()
                 return S_REST
@@ -237,10 +241,13 @@ class RetreatTask(BaseTask):
                     self._nav.ensure_sitting()
                 except VerifyFailed:
                     log.warning("could not sit down, resting standing up")
-            # 2 chu kỳ liên tiếp không thấy tên thành (1 khung có thể bị che)
-            if self._nav.in_map(self._farm.retreat_map, frame=frame):
+            # 2 chu kỳ liên tiếp không thấy tên thành (1 khung có thể bị che);
+            # map từ kho trả None = không đọc được vị trí theo khung hình —
+            # bỏ qua (mở bản đồ so tiêu đề mỗi chu kỳ sẽ phá giấc nghỉ)
+            here = self._nav.in_map(self._farm.retreat_map, frame=frame)
+            if here:
                 away_streak = 0
-            else:
+            elif here is False:
                 away_streak += 1
                 if away_streak >= 2:
                     raise TaskError("pulled out of the retreat map while resting")

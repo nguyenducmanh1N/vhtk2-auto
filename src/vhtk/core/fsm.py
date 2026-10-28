@@ -109,6 +109,10 @@ class TaskContext:
     settings: Settings
     account: AccountConfig | None
     log_dir: Path
+    # Báo cáo (task_name, state_name) mỗi khi vào một state — worker dùng để
+    # ghi file trạng thái cho GUI/orchestrator. Lỗi trong callback bị nuốt,
+    # không bao giờ được làm hỏng task.
+    on_state: Callable[[str, str], None] | None = None
 
 
 class BaseTask(ABC):
@@ -233,6 +237,10 @@ class BaseTask(ABC):
                 return TaskResult(
                     TaskStatus.RELOGIN_REQUIRED, current, "thrown back to login", total_recovers
                 )
+
+            if self.ctx.on_state is not None:
+                with contextlib.suppress(Exception):
+                    self.ctx.on_state(self.name, current)
 
             state = self._states[current]
             started = time.monotonic()

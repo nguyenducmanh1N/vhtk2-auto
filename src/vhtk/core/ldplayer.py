@@ -164,6 +164,29 @@ class LDPlayerManager:
         self._runner(["quit", "--index", str(index)])
         log.info("instance quit requested", index=index)
 
+    def clone(self, name: str, from_index: int) -> int:
+        """Duplicate an instance (``ldconsole copy``) and return the new index.
+
+        ``copy`` prints nothing useful, so the new index is found by diffing
+        ``list2`` before/after; when several new rows appear (user clicked
+        around in LDPlayer at the same time) the one matching ``name`` wins.
+
+        Raises:
+            LDConsoleError: the new instance cannot be identified.
+        """
+        before = {inst.index for inst in self.list_instances()}
+        self._runner(["copy", "--name", name, "--from", str(from_index)])
+        new = [inst for inst in self.list_instances() if inst.index not in before]
+        if len(new) > 1:
+            new = [inst for inst in new if inst.name == name]
+        if len(new) != 1:
+            raise LDConsoleError(
+                f"cannot identify the instance cloned from {from_index} as {name!r} "
+                f"(found {len(new)} new instances)"
+            )
+        log.info("instance cloned", name=name, from_index=from_index, index=new[0].index)
+        return new[0].index
+
     def set_resolution(
         self, index: int, width: int = 960, height: int = 540, dpi: int = 160
     ) -> None:

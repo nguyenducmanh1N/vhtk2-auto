@@ -31,6 +31,19 @@ log = structlog.get_logger(__name__)
 Image: TypeAlias = npt.NDArray[np.uint8]
 
 
+def kill_switch_files(base: Path, stem: str | None = None) -> tuple[Path, ...]:
+    """Kill-switch file set for one worker: global STOP plus per-account STOP.
+
+    Multi-instance rule (W2): the global file (``STOP``) stops EVERY worker;
+    ``STOP.<stem>`` stops only the worker running that account. A worker
+    checks both; single-account tools pass ``stem=None`` and check only the
+    global file.
+    """
+    if stem is None:
+        return (base,)
+    return (base, base.with_name(f"{base.name}.{stem}"))
+
+
 class Safety:
     """Session-scoped safety state: kill-switch, dry_run, confirm, counters.
 
@@ -44,6 +57,8 @@ class Safety:
             (e.g. ``logs/dry_run``); created on first use.
         kill_switch_path: kill-switch file location override (tests);
             defaults to ``cfg.kill_switch_file`` relative to the CWD.
+        stem: account stem this worker runs; when given, the per-account
+            kill-switch file ``STOP.<stem>`` is honored as well.
     """
 
     def __init__(
@@ -52,11 +67,13 @@ class Safety:
         notifier: Notifier,
         evidence_dir: Path,
         kill_switch_path: Path | None = None,
+        stem: str | None = None,
     ) -> None:
         self._cfg = cfg
         self._notifier = notifier
         self._evidence_dir = evidence_dir
-        self._kill_switch = kill_switch_path or Path(cfg.kill_switch_file)
+        base = kill_switch_path or Path(cfg.kill_switch_file)
+        self._kill_switches = kill_switch_files(base, stem)
         self._executed_count = 0
 
     @property
@@ -68,10 +85,11 @@ class Safety:
         """Raise if the kill-switch file exists.
 
         Raises:
-            KillSwitchTriggered: the STOP file is present.
+            KillSwitchTriggered: a STOP file (global or per-account) is present.
         """
-        if self._kill_switch.exists():
-            raise KillSwitchTriggered(f"kill-switch file present: {self._kill_switch}")
+        for path in self._kill_switches:
+            if path.exists():
+                raise KillSwitchTriggered(f"kill-switch file present: {path}")
 
     def guard_irreversible(
         self,

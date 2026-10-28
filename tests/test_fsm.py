@@ -458,3 +458,27 @@ def test_kill_switch_raised_inside_handler(tmp_path: Path) -> None:
 
     assert result.status is TaskStatus.KILLED
     assert rec.failure_calls == []  # kill-switch không phải lỗi cần recover
+
+
+def test_on_state_callback_reports_every_state(tmp_path: Path) -> None:
+    ctx, _, _ = make_ctx(tmp_path)
+    seen: list[tuple[str, str]] = []
+    ctx.on_state = lambda task, state: seen.append((task, state))
+    states = [
+        State("A", lambda: "B", 5.0, frozenset({"B"})),
+        State("B", lambda: DONE, 5.0, frozenset({DONE})),
+    ]
+    result = run_task(ctx, states)
+    assert result.status is TaskStatus.SUCCESS
+    assert seen == [("demo", "A"), ("demo", "B")]
+
+
+def test_on_state_callback_errors_are_swallowed(tmp_path: Path) -> None:
+    ctx, _, _ = make_ctx(tmp_path)
+
+    def boom(task: str, state: str) -> None:
+        raise RuntimeError("reporting must never kill the task")
+
+    ctx.on_state = boom
+    states = [State("A", lambda: DONE, 5.0, frozenset({DONE}))]
+    assert run_task(ctx, states).status is TaskStatus.SUCCESS

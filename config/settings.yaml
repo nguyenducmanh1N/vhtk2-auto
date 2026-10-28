@@ -223,6 +223,27 @@ login:
   # Số phím Delete gửi để dọn sạch ô nhập trước khi gõ tài khoản/mật khẩu
   clear_chars: 40
 
+# Điều phối đa instance (W2): mỗi acc một tiến trình worker riêng
+# (`python -m vhtk.worker`), orchestrator chỉ quản lý tiến trình + instance.
+orchestrator:
+  # Có điều khiển vòng đời instance LDPlayer qua ldconsole hay không.
+  # Mac dev (AVD chạy sẵn): false. Server Windows: true.
+  manage_instances: false
+  # Index instance MẪU (đã cài game, 960x540/DPI 160) để `ldconsole copy`
+  # khi thêm tài khoản mới qua GUI; bỏ trống = không cho provision
+  template_instance_index: null
+  # Số instance chạy đồng thời tối đa (farm + main on-demand)
+  max_concurrent_instances: 5
+  # Chờ Android boot xong sau `ldconsole launch` (giây)
+  boot_timeout: 180
+  # Chờ worker dừng sạch qua kill-switch STOP.<acc> trước khi buộc dừng (giây)
+  stop_timeout: 120
+  # Thư mục registry PID + file trạng thái từng worker
+  workers_dir: logs/workers
+  # Gom yêu cầu chuyển vàng: đợi tối đa N giây từ yêu cầu đầu tiên để nhiều
+  # acc đạt ngưỡng đi chung MỘT lần mở main (0 = mở ngay khi có yêu cầu)
+  main_batch_window_seconds: 300
+
 telegram:
   # Bật/tắt thông báo Telegram
   enabled: false

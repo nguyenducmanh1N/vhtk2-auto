@@ -11,8 +11,7 @@ from __future__ import annotations
 
 import re
 import subprocess
-import sys
-import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +37,11 @@ from vhtk.config_writer import (
     write_settings_farm_skills,
     write_settings_safety,
 )
+from vhtk.core.ldplayer import LDPlayerManager
+from vhtk.mapstore import MapStore
+from vhtk.mapstore import maps_dir as store_maps_dir
+from vhtk.orchestrator import OrchestratorError, WorkerSupervisor
+from vhtk.tasks.navigate import map_slug
 
 log = structlog.get_logger(__name__)
 
@@ -54,9 +58,30 @@ def _validation_detail(exc: ValidationError) -> list[dict[str, str]]:
     ]
 
 
-def create_app(settings_path: Path = Path("config/settings.yaml")) -> FastAPI:
-    """Build the FastAPI app bound to one settings file."""
+def create_app(
+    settings_path: Path = Path("config/settings.yaml"),
+    supervisor_factory: Callable[[], WorkerSupervisor] | None = None,
+) -> FastAPI:
+    """Build the FastAPI app bound to one settings file.
+
+    Args:
+        settings_path: the settings.yaml this server reads/writes.
+        supervisor_factory: WorkerSupervisor builder override (tests); the
+            default builds one per request from the CURRENT settings, with an
+            LDPlayerManager only when ``orchestrator.manage_instances`` is on.
+    """
     app = FastAPI(title="VHTK2 Auto Tool — Quản lý", docs_url=None, redoc_url=None)
+
+    def default_supervisor() -> WorkerSupervisor:
+        settings = load_settings(settings_path)
+        ld = (
+            LDPlayerManager(settings.ldplayer.ldconsole_path)
+            if settings.orchestrator.manage_instances
+            else None
+        )
+        return WorkerSupervisor(settings, settings_path, ld=ld)
+
+    make_supervisor = supervisor_factory or default_supervisor
 
     @app.exception_handler(ConfigError)
     def config_error_handler(request: Request, exc: ConfigError) -> JSONResponse:
@@ -179,10 +204,14 @@ def create_app(settings_path: Path = Path("config/settings.yaml")) -> FastAPI:
 
     @app.get("/api/farm-maps")
     def farm_maps() -> list[dict[str, str]]:
-        """Maps ready to farm: template pair ``row_<slug>`` + ``hud_name_<slug>``
-        both exist in the active template version. Display names come from
-        ``display_name`` in the template manifest."""
+        """Maps selectable for farming: every NAMED map in the harvested map
+        store (``data/maps/<version>``, Navigator dò bằng crop đã quét) plus
+        maps with a hand-captured ``row_``/``hud_name_`` template pair (display
+        names from ``display_name`` in the template manifest)."""
         settings = load_settings(settings_path)
+        by_slug: dict[str, str] = {}
+        for name in MapStore(store_maps_dir(settings.templates.version)).names():
+            by_slug[map_slug(name)] = name
         map_dir = settings.templates.root / "map"
         manifest: dict[str, Any] = {}
         mf = settings.templates.root / "manifest.yaml"
@@ -190,22 +219,25 @@ def create_app(settings_path: Path = Path("config/settings.yaml")) -> FastAPI:
             raw = yaml.safe_load(mf.read_text(encoding="utf-8"))
             if isinstance(raw, dict):
                 manifest = raw
-        out: list[dict[str, str]] = []
-        if not map_dir.is_dir():
-            return out
-        for row in sorted(map_dir.glob("row_*.png")):
-            slug = row.stem.removeprefix("row_")
-            if not (map_dir / f"hud_name_{slug}.png").is_file():
-                continue  # thiếu nửa cặp -> map chưa sẵn sàng, không cho chọn
-            meta = manifest.get(f"map/row_{slug}")
-            name = meta.get("display_name") if isinstance(meta, dict) else None
-            out.append({"slug": slug, "name": str(name) if name else slug.replace("_", " ")})
-        return out
+        if map_dir.is_dir():
+            for row in sorted(map_dir.glob("row_*.png")):
+                slug = row.stem.removeprefix("row_")
+                if not (map_dir / f"hud_name_{slug}.png").is_file():
+                    continue  # thiếu nửa cặp template -> chỉ dùng được qua kho
+                meta = manifest.get(f"map/row_{slug}")
+                disp = meta.get("display_name") if isinstance(meta, dict) else None
+                # tên hiển thị trong manifest template thắng tên kho (có dấu chuẩn hơn)
+                if disp or slug not in by_slug:
+                    by_slug[slug] = str(disp) if disp else slug.replace("_", " ")
+        return sorted(
+            ({"slug": s, "name": n} for s, n in by_slug.items()),
+            key=lambda e: e["name"],
+        )
 
     # -- map library (kho ảnh map đã quét bằng tools/harvest_maps.py) --------------
 
     def maps_dir() -> Path:
-        return Path("data/maps") / load_settings(settings_path).templates.version
+        return store_maps_dir(load_settings(settings_path).templates.version)
 
     def maps_manifest() -> dict[str, Any]:
         mf = maps_dir() / "manifest.yaml"
@@ -240,54 +272,83 @@ def create_app(settings_path: Path = Path("config/settings.yaml")) -> FastAPI:
                     return FileResponse(f, media_type="image/png")
         raise HTTPException(404, detail=f"khong co anh map index {index}")
 
-    # -- runner control (giải pháp tạm cho D1 — W2 chuyển sang API orchestrator) --
+    # -- workers (W2: orchestrator API — mỗi acc một tiến trình worker riêng) ------
 
-    def runner_pids() -> list[int]:
-        r = subprocess.run(
-            ["pgrep", "-f", "tools/run_farm.py"], capture_output=True, text=True, check=False
-        )
-        return [int(x) for x in r.stdout.split()]
+    def _checked_stem(stem: str) -> str:
+        if not account_path(stem).is_file():
+            raise HTTPException(404, detail=f"khong tim thay tai khoan {stem!r}")
+        return stem
+
+    @app.get("/api/workers")
+    def list_workers() -> list[dict[str, Any]]:
+        """Every account with its worker's registry + state-file status."""
+        sup = make_supervisor()
+        rows: list[dict[str, Any]] = []
+        folder = accounts_dir()
+        if not folder.is_dir():
+            return rows
+        for f in sorted(folder.glob("*.yaml")):
+            if f.name == EXAMPLE_NAME:
+                continue
+            row = sup.worker_status(f.stem)
+            try:
+                acc = load_account(f)
+                row.update(name=acc.name, role=acc.role,
+                           ldplayer_index=acc.ldplayer.index,
+                           adb_serial=acc.ldplayer.adb_serial)
+            except ConfigError as exc:
+                row["error"] = str(exc)
+            rows.append(row)
+        return rows
+
+    @app.post("/api/workers/{stem}/start")
+    def start_worker(stem: str) -> dict[str, Any]:
+        try:
+            pid = make_supervisor().start(_checked_stem(stem))
+        except OrchestratorError as exc:
+            raise HTTPException(409, detail=str(exc)) from exc
+        return {"status": "started", "stem": stem, "pid": pid}
+
+    @app.post("/api/workers/{stem}/stop")
+    def stop_worker(stem: str) -> dict[str, Any]:
+        make_supervisor().stop(_checked_stem(stem))
+        return {"status": "stopped", "stem": stem}
+
+    @app.post("/api/workers/{stem}/restart")
+    def restart_worker(stem: str) -> dict[str, Any]:
+        try:
+            pid = make_supervisor().restart(_checked_stem(stem))
+        except OrchestratorError as exc:
+            raise HTTPException(409, detail=str(exc)) from exc
+        return {"status": "restarted", "stem": stem, "pid": pid}
+
+    @app.post("/api/workers/{stem}/provision")
+    def provision_worker(stem: str) -> dict[str, Any]:
+        """Clone the template LDPlayer instance for this account and start it
+        (Windows only: needs ``orchestrator.manage_instances`` + template index)."""
+        try:
+            pid = make_supervisor().provision(_checked_stem(stem))
+        except OrchestratorError as exc:
+            raise HTTPException(409, detail=str(exc)) from exc
+        return {"status": "provisioned", "stem": stem, "pid": pid}
+
+    # -- runner (tương thích GUI cũ — giờ chạy trên registry/supervisor) -----------
 
     @app.get("/api/runner")
     def runner_status() -> dict[str, Any]:
-        pids = runner_pids()
-        return {"running": bool(pids), "pids": pids}
+        sup = make_supervisor()
+        stems = sup.registry.live_stems()
+        pids = [p for s in stems if (i := sup.registry.info(s)) and (p := i.pid)]
+        return {"running": bool(stems), "pids": pids, "stems": stems}
 
     @app.post("/api/runner/restart")
     def runner_restart(body: dict[str, Any]) -> dict[str, Any]:
-        """Stop the farm runner cleanly (kill-switch) and start it again with
-        the given account — so a saved config actually takes effect.
-
-        Process control only; no game logic lives here. The stop goes through
-        the same STOP-file mechanism a human would use.
-        """
-        stem = str(body.get("account", ""))
-        path = account_path(stem)
-        if not path.is_file():
-            raise HTTPException(404, detail=f"khong tim thay tai khoan {stem!r}")
-        settings = load_settings(settings_path)
-        stop_file = Path(settings.safety.kill_switch_file)
-        if runner_pids():
-            stop_file.touch()
-            deadline = time.monotonic() + 60.0
-            while runner_pids() and time.monotonic() < deadline:
-                time.sleep(0.5)
-            if runner_pids():
-                log.warning("runner did not stop via kill-switch, killing")
-                subprocess.run(["pkill", "-f", "tools/run_farm.py"], check=False)
-                time.sleep(1.0)
-        stop_file.unlink(missing_ok=True)
-        log_dir = settings.logging.dir
-        log_dir.mkdir(parents=True, exist_ok=True)
-        with (log_dir / "runner.out").open("ab") as out:
-            proc = subprocess.Popen(
-                [sys.executable, "tools/run_farm.py", "--account", str(path)],
-                stdout=out,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-            )
-        log.info("runner restarted from GUI", account=stem, pid=proc.pid)
-        return {"status": "restarted", "pid": proc.pid, "account": stem}
+        stem = _checked_stem(str(body.get("account", "")))
+        try:
+            pid = make_supervisor().restart(stem)
+        except OrchestratorError as exc:
+            raise HTTPException(409, detail=str(exc)) from exc
+        return {"status": "restarted", "pid": pid, "account": stem}
 
     # -- settings (safety only, per D1 scope) -----------------------------------
 
