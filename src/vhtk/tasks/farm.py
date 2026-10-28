@@ -53,6 +53,9 @@ log = structlog.get_logger(__name__)
 TPL_HUD = "login/hud_auto_btn"
 # Icon Túi đồ chuyển vòng đỏ "Đầy" khi hành trang quá nặng (chụp AVD 27/10)
 TPL_BAG_FULL = "common/bag_full_icon"
+# Dòng đỏ cảnh báo sớm trong khung chat: túi nặng tới mức giảm tốc hồi máu
+# nhưng CHƯA khoá võ công — đi bán từ mức này, khỏi chờ khoá cứng
+TPL_BAG_HEAVY = "common/bag_heavy_notice"
 
 # State names
 S_VERIFY_HUD = "VERIFY_HUD"
@@ -246,6 +249,9 @@ class FarmTask(BaseTask):
         self._bag_check_ready = (
             self._bag_rect is not None and TPL_BAG_FULL in ctx.vision.store
         )
+        # tầng cảnh báo sớm: dòng chat trôi nên "thấy một lần" được giữ (latch)
+        # thêm vài chu kỳ cho policy gom đủ chuỗi liên tiếp
+        self._heavy_latch = 0
         if not self._bag_check_ready:
             log.warning(
                 "bag-full detection disabled",
@@ -384,7 +390,7 @@ class FarmTask(BaseTask):
 
     def _tap_spot(self) -> str:
         cfg = self.ctx.settings.farm
-        x, y = self._nav.resolve_spot(tuple(self._farm.spot))
+        x, y = self._nav.resolve_spot(self._farm.spot)
         try:
             self._nav.tap_map_point(x, y)
         except VerifyFailed:
@@ -576,16 +582,31 @@ class FarmTask(BaseTask):
             return None
 
     def _bag_full(self, frame: Image) -> bool | None:
-        """Is the HUD bag icon showing the red "Đầy" state? ``None`` = can't tell.
+        """Is the bag too heavy to keep farming? ``None`` = can't tell.
 
-        Xác nhận kép: template icon khớp VÀ tỉ lệ pixel đỏ trong ô icon vượt
-        ngưỡng — icon thường cùng khối tròn nên chỉ một vế là không đủ tin
-        (template 0.806 trên frame âm; màu đỏ xuất hiện ở màn login/shop).
+        Hai tầng phát hiện (27/10):
+        - CẢNH BÁO SỚM: dòng đỏ "Hành trang mang theo quá nhiều vật phẩm"
+          trong khung chat (giảm tốc hồi máu) — thấy là đi bán luôn. Dòng
+          chat trôi nên một lần thấy được latch thêm ``bag_full_cycles``
+          chu kỳ cho policy gom đủ chuỗi liên tiếp.
+        - KHOÁ CỨNG: icon Túi đồ vòng đỏ "Đầy" (game khoá võ công). Xác nhận
+          kép: template khớp VÀ tỉ lệ pixel đỏ trong ô icon vượt ngưỡng —
+          icon thường cùng khối tròn nên một vế là không đủ tin (template
+          0.806 trên frame âm; mảng đỏ trùng vị trí ở màn login/shop).
         """
-        if not self._bag_check_ready or self._bag_rect is None:
-            return None
         cfg = self.ctx.settings.farm
         try:
+            if (
+                TPL_BAG_HEAVY in self.ctx.vision.store
+                and self.ctx.vision.find(TPL_BAG_HEAVY, screenshot=frame) is not None
+            ):
+                self._heavy_latch = cfg.bag_full_cycles
+                return True
+            if self._heavy_latch > 0:
+                self._heavy_latch -= 1
+                return True
+            if not self._bag_check_ready or self._bag_rect is None:
+                return None
             tpl_hit = self.ctx.vision.find(TPL_BAG_FULL, screenshot=frame) is not None
             red = color_ratio(frame, self._bag_rect, cfg.bag_full_color)
         except Exception:

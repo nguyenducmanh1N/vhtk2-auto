@@ -46,6 +46,19 @@ farm:
     -   - 805
         - 293
   bag_full_icon_rect: [871, 159, 40, 40]
+  # Danh sách map bên trái màn bản đồ (dòng động, không template được) —
+  # hình học cho tools/harvest_maps.py, đo trên AVD 27/10: 11 dòng, dòng đầu
+  # tâm y=153, bước 32px
+  map_list:
+    rect: [95, 140, 215, 350]
+    row_x: 197
+    first_row_y: 153
+    row_pitch: 32
+    visible_rows: 11
+  # Thanh tiêu đề màn bản đồ (hiện tên map đang preview)
+  map_title_rect: [360, 34, 240, 26]
+  # Dòng "Đi: <Map>(x, y)" đáy màn khi bắt đầu tìm đường (đo AVD 27/10)
+  travel_text_rect: [300, 498, 340, 40]
 sell:
   # Lưới ô túi trên màn cửa hàng (đo bằng mask màu highlight trên AVD 2026-10-26)
   bag_grid:

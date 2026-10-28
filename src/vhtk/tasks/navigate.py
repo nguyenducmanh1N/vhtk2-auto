@@ -252,6 +252,24 @@ class Navigator:
         if not self.ctx.vision.wait_vanish(TPL_BTN_CONFIRM_COORDS, timeout=self.cfg.map_timeout):
             raise VerifyFailed("map screen did not close")
 
+    def ensure_find_map_tab(self) -> None:
+        """Switch the map screen's left panel to the "Tìm map" tab (idempotent).
+
+        Dùng cho các tool vận hành (harvest/calibrate) tap dòng theo vị trí —
+        luồng task thường dùng ``_select_row`` (tự chuyển tab theo template dòng).
+
+        Raises:
+            StateTimeout: tabs not visible (map screen not open?).
+        """
+        hit = self.ctx.vision.wait_any(
+            [TPL_TAB_FIND_MAP_ON, TPL_TAB_FIND_MAP_OFF], timeout=self.cfg.map_timeout
+        )
+        if hit is None:
+            raise StateTimeout("map tabs not visible — is the map screen open?")
+        if hit[0] == TPL_TAB_FIND_MAP_OFF:
+            self.ctx.device.tap(*hit[1].center)
+            time.sleep(1.0)
+
     # -- target selection ----------------------------------------------------------
 
     def select_map(self, map_name: str) -> None:

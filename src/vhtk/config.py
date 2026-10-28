@@ -343,6 +343,19 @@ class LoginCoordinates(_StrictModel):
     char_slots: list[tuple[int, int]]
 
 
+class MapListGeometry(_StrictModel):
+    """Geometry of the map screen's left list ("Tìm map") — dynamic rows,
+    untemplatable; the harvest tool taps rows by position (đo trên AVD 27/10)."""
+
+    # Vùng danh sách (x, y, w, h) — dùng làm vùng vuốt khi cuộn
+    rect: tuple[int, int, int, int]
+    # Tâm X của mọi dòng; Y dòng đầu; bước Y giữa 2 dòng; số dòng nhìn thấy
+    row_x: int
+    first_row_y: int
+    row_pitch: int = Field(gt=0)
+    visible_rows: int = Field(gt=0)
+
+
 class FarmCoordinates(_StrictModel):
     """Fixed UI positions of the farm flow (no templates possible there)."""
 
@@ -361,6 +374,13 @@ class FarmCoordinates(_StrictModel):
     # Ô icon Túi đồ trên HUD (x, y, w, h) — kiểm tỉ lệ pixel đỏ khi icon
     # chuyển trạng thái "Đầy"; None = tắt phát hiện túi đầy
     bag_full_icon_rect: tuple[int, int, int, int] | None = None
+    # Danh sách map bên trái màn bản đồ — cho tools/harvest_maps.py
+    map_list: MapListGeometry | None = None
+    # Thanh tiêu đề màn bản đồ (tên map đang preview) — crop cho người đọc
+    map_title_rect: tuple[int, int, int, int] | None = None
+    # Vùng dòng "Đi: <Map>(x, y)" game in khi bắt đầu tìm đường — nguồn cặp
+    # (pixel, toạ độ) cho tools/calibrate_map.py
+    travel_text_rect: tuple[int, int, int, int] | None = None
 
     @model_validator(mode="after")
     def _skill_slots_len(self) -> FarmCoordinates:

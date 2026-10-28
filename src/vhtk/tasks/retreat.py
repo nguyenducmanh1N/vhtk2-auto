@@ -152,7 +152,7 @@ class RetreatTask(BaseTask):
 
     def _tap_spot(self) -> str:
         cfg = self.ctx.settings.farm
-        x, y = self._nav.resolve_spot(tuple(self._farm.retreat_spot))
+        x, y = self._nav.resolve_spot(self._farm.retreat_spot)
         try:
             self._nav.tap_map_point(x, y)
         except VerifyFailed:

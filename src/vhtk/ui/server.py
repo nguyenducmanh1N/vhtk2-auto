@@ -202,6 +202,44 @@ def create_app(settings_path: Path = Path("config/settings.yaml")) -> FastAPI:
             out.append({"slug": slug, "name": str(name) if name else slug.replace("_", " ")})
         return out
 
+    # -- map library (kho ảnh map đã quét bằng tools/harvest_maps.py) --------------
+
+    def maps_dir() -> Path:
+        return Path("data/maps") / load_settings(settings_path).templates.version
+
+    def maps_manifest() -> dict[str, Any]:
+        mf = maps_dir() / "manifest.yaml"
+        if not mf.is_file():
+            return {"maps": [], "map_image_rect": None}
+        raw = yaml.safe_load(mf.read_text(encoding="utf-8"))
+        return raw if isinstance(raw, dict) else {"maps": [], "map_image_rect": None}
+
+    @app.get("/api/maps")
+    def map_library() -> dict[str, Any]:
+        """Harvested map previews + per-map pixel<->game-coord calibration."""
+        data = maps_manifest()
+        return {
+            "map_image_rect": data.get("map_image_rect"),
+            "maps": [
+                {
+                    "index": e["index"],
+                    "name": e["name"],
+                    "calibration": e.get("calibration"),
+                }
+                for e in data.get("maps", [])
+                if e.get("name")
+            ],
+        }
+
+    @app.get("/api/maps/{index}/image")
+    def map_image(index: int) -> FileResponse:
+        for e in maps_manifest().get("maps", []):
+            if e["index"] == index:
+                f = maps_dir() / e["files"]["map"]
+                if f.is_file():
+                    return FileResponse(f, media_type="image/png")
+        raise HTTPException(404, detail=f"khong co anh map index {index}")
+
     # -- runner control (giải pháp tạm cho D1 — W2 chuyển sang API orchestrator) --
 
     def runner_pids() -> list[int]:
@@ -324,7 +362,11 @@ def create_app(settings_path: Path = Path("config/settings.yaml")) -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     def index() -> FileResponse:
-        return FileResponse(STATIC_DIR / "index.html")
+        # no-cache: trình duyệt phải hỏi lại server mỗi lần tải — tránh người
+        # vận hành dùng bản HTML cũ sau khi app được cập nhật (sự cố 27/10)
+        return FileResponse(
+            STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"}
+        )
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     return app

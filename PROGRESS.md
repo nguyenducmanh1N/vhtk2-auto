@@ -259,6 +259,37 @@ Thêm: `TaskError` (gốc lỗi trong-task, FSM đưa về RECOVER) → `StateTi
   1 abort do thành đông người → đã vá đa-mỏ-neo); thử tắt auto tay → tool tự bật lại
   (REENABLE trong MONITOR — logic có test nhưng chưa thử tay trên AVD).
 
+### Kho dữ liệu map + hướng toạ độ game (bắt đầu 2026-10-27)
+
+- **Khảo sát màn bản đồ:** tap pixel hợp lệ → game in "Đi: <Map>(x, y)" ở đáy
+  màn = nguồn quy đổi pixel↔toạ độ game; điểm không đi được → toast "Không thể
+  đến được vị trí này"; nhân vật NGỒI thì mọi lệnh đi bị lờ (phải đứng trước).
+  Ô nhập X/Y + nút Xác nhận có trong game nhưng nút KHÔNG nhận tap qua ADB
+  (thử tap/đúp/Enter/nhấn giữ) — điều hướng vẫn bằng tap pixel.
+- **`tools/harvest_maps.py` (mảnh 1 — XONG):** quét tab "Tìm map" (hình học
+  `farm.map_list` trong coordinates.yaml), tap từng dòng + cuộn trang, chống
+  trùng bằng so khớp ảnh dòng. Kết quả: **86 map** trong `data/maps/v1.0-avd/`
+  (ảnh map + crop dòng tên + crop tiêu đề + manifest.yaml ĐÃ điền đủ tên).
+- **`tools/calibrate_map.py` (mảnh 2 — XONG, đã hiệu chuẩn Tuyền Châu):**
+  chọn map bằng match MẶT NẠ CHỮ của crop dòng (match màu thẳng tụt về 0.31 vì
+  nền highlight; nhị phân >200 cho 1.00/0.37), xác minh bằng crop tiêu đề, tap
+  lưới điểm qua `tap_map_point`, chụp dòng "Đi: (x,y)" → samples.yaml; người
+  đọc ảnh điền số (OCR trên Windows sau) → `--fit` (bình phương tối thiểu từng
+  trục, `src/vhtk/mapcal.py`) → ghi `calibration` vào manifest. Tuyền Châu:
+  sx=0.0938 sy=0.0873, residual 1.0 đơn vị. Lưu ý vận hành: game NHỚ vị trí
+  cuộn danh sách; swipe bắt đầu sát mép trên bị nuốt; nhân vật NGỒI thì mọi
+  lệnh tìm đường bị lờ.
+- **GUI chọn điểm trên ảnh map (mảnh 3 — XONG):** nút "Chọn trên ảnh" của
+  điểm farm/điểm rút giờ hiện ẢNH MAP từ kho (`GET /api/maps`,
+  `/api/maps/{i}/image`) theo map đang chọn trong form; click ra pixel màn
+  hình (cộng offset `map_image_rect`) kèm TOẠ ĐỘ GAME nếu map đã hiệu chuẩn.
+  Nút "Dùng ảnh thiết bị" quay về chế độ chụp màn cũ (vẫn là chế độ mặc định
+  cho các điểm HUD như ô chiêu). Kiểm chứng Playwright: Tuyền Châu click giữa
+  thành ra "pixel 587/262 — toạ độ game 181/187" (nhân vật thật đứng 182/189).
+- **Nợ:** harvest 0.92 từng nuốt dòng tên gần giống ("Đại Thảo Nguyên 2",
+  "Tàn Lăng", "Yến Tử động-2"...) — đã nâng ngưỡng 0.97, CẦN quét lại và điền
+  tên bổ sung.
+
 ### Phát hiện túi đầy → về thành bán (thêm 2026-10-27, phương án A)
 
 - **Vấn đề:** hành trang quá nặng thì game KHOÁ võ công ("Hành trang quá nặng,

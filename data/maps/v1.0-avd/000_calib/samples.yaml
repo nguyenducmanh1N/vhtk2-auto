@@ -1,0 +1,28 @@
+map: Tuyền Châu
+samples:
+- pixel:
+  - 523
+  - 168
+  crop: point_0.png
+  game:
+  - 176
+  - 179
+- pixel:
+  - 587
+  - 168
+  crop: point_1.png
+  game:
+  - 181
+  - 178
+- pixel:
+  - 459
+  - 231
+  crop: point_2.png
+  game:
+  - 169
+  - 184
+- pixel:
+  - 523
+  - 231
+  crop: point_3.png
+  game: null

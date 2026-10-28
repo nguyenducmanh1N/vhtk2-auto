@@ -324,30 +324,74 @@ function collect(acc) {
   return out;
 }
 
-// Công cụ chọn điểm tap: chụp màn thiết bị, click lên ảnh -> pixel 960x540.
+// Công cụ chọn điểm tap, hai chế độ:
+//  - map: điểm farm/rút (farm.spot, farm.retreat_spot) -> hiện ẢNH MAP đã quét
+//    (data/maps, GET /api/maps) theo tên map đang chọn trong form; click ra
+//    pixel MÀN HÌNH (cộng offset vùng ảnh bản đồ) + toạ độ TRONG GAME nếu map
+//    đã hiệu chuẩn (tools/calibrate_map.py)
+//  - live: các điểm HUD (ô chiêu...) -> chụp màn thiết bị như cũ
 // Ảnh hiển thị có thể bị thu nhỏ nên phải quy đổi theo naturalWidth/clientWidth.
-// stemOf(): tài khoản dùng để chụp màn — trang tài khoản là chính nó,
+// stemOf(): tài khoản dùng khi chụp màn — trang tài khoản là chính nó,
 // trang Chiêu là thiết bị được chọn trong dropdown.
+let _mapLib = null;
+const mapLib = async () => {
+  if (!_mapLib) _mapLib = await api("GET", "/api/maps")
+    .catch(() => ({ maps: [], map_image_rect: null }));
+  return _mapLib;
+};
+
 function wireSpotPickers(stemOf) {
   const dlg = $("#dlgPick"), img = $("#pickImg"), dot = $("#pickDot");
   const xy = $("#pickXY"), ok = $("#pickOk"), msg = $("#pickMsg");
-  let picked = null, prefix = null;
+  const refresh = $("#pickRefresh");
+  let picked = null, prefix = null, mode = "live", rect = null, calib = null;
 
-  const load = () => {
+  const reset = () => {
     picked = null; ok.disabled = true; dot.style.display = "none"; xy.textContent = "";
+  };
+  const loadLive = () => {
+    mode = "live"; reset();
+    msg.textContent = "Click lên ảnh để chọn điểm tap. Ảnh là màn hình thiết bị NGAY LÚC "
+      + "NÀY — hãy mở sẵn màn bản đồ đúng map trong game trước.";
+    refresh.textContent = "Chụp lại";
     img.src = `/api/accounts/${stemOf()}/screenshot?ts=${Date.now()}`;
   };
-  img.onerror = () => { msg.textContent = "Không chụp được màn hình — thiết bị có đang chạy không?"; };
+  const loadMap = async () => {
+    const mapField = prefix === "farm.retreat_spot" ? "farm.retreat_map" : "farm.map";
+    const sel = document.querySelector(`[data-path="${mapField}"]`);
+    const name = sel ? sel.value : "";
+    const lib = await mapLib();
+    const entry = lib.maps.find((m) => m.name === name);
+    if (!entry || !lib.map_image_rect) { loadLive(); return; }
+    mode = "map"; rect = lib.map_image_rect; calib = entry.calibration || null; reset();
+    msg.textContent = `Ảnh map "${name}" từ kho đã quét — click để chọn điểm. `
+      + (calib ? "Map đã hiệu chuẩn: hiện kèm toạ độ trong game."
+               : "(map chưa hiệu chuẩn — chỉ có pixel, chạy tools/calibrate_map.py để có toạ độ)");
+    refresh.textContent = "Dùng ảnh thiết bị";
+    img.src = `/api/maps/${entry.index}/image?ts=${Date.now()}`;
+  };
+  img.onerror = () => { msg.textContent = "Không tải được ảnh — thiết bị có đang chạy không?"; };
   img.onclick = (ev) => {
     const r = img.getBoundingClientRect();
     const scaleX = img.naturalWidth / r.width, scaleY = img.naturalHeight / r.height;
-    picked = [Math.round((ev.clientX - r.left) * scaleX), Math.round((ev.clientY - r.top) * scaleY)];
+    let px = Math.round((ev.clientX - r.left) * scaleX);
+    let py = Math.round((ev.clientY - r.top) * scaleY);
+    if (mode === "map") { px += rect[0]; py += rect[1]; }
+    picked = [px, py];
     dot.style.left = `${ev.clientX - r.left}px`; dot.style.top = `${ev.clientY - r.top}px`;
     dot.style.display = "block";
-    xy.textContent = `pixel: ${picked[0]} / ${picked[1]}`;
+    let t = `pixel: ${px} / ${py}`;
+    if (mode === "map" && calib) {
+      const gx = Math.round(calib.sx * px + calib.ox);
+      const gy = Math.round(calib.sy * py + calib.oy);
+      t += `  —  toạ độ game: ${gx} / ${gy}`;
+    }
+    xy.textContent = t;
     ok.disabled = false;
   };
-  $("#pickRefresh").onclick = load;
+  // map -> chuyển sang ảnh thiết bị; live -> chụp lại (muốn quay về ảnh map
+  // thì đóng dialog mở lại)
+  refresh.onclick = loadLive;
   $("#pickCancel").onclick = () => dlg.close();
   ok.onclick = () => {
     if (!picked || !prefix) return;
@@ -359,7 +403,12 @@ function wireSpotPickers(stemOf) {
     dlg.close();
   };
   for (const btn of document.querySelectorAll(".pick-spot"))
-    btn.onclick = () => { prefix = btn.dataset.prefix; load(); dlg.showModal(); };
+    btn.onclick = () => {
+      prefix = btn.dataset.prefix;
+      if (prefix === "farm.spot" || prefix === "farm.retreat_spot") loadMap().catch(loadLive);
+      else loadLive();
+      dlg.showModal();
+    };
 }
 
 function wireAccountPage(acc) {

@@ -248,3 +248,16 @@ def test_index_served(client: TestClient) -> None:
     r = client.get("/")
     assert r.status_code == 200
     assert "VHTK2" in r.text
+
+
+def test_map_library_endpoints(client: TestClient) -> None:
+    """Kho map (data/maps) — rỗng cũng phải trả cấu trúc hợp lệ."""
+    lib = client.get("/api/maps").json()
+    assert "maps" in lib and "map_image_rect" in lib
+    for m in lib["maps"]:
+        assert m["name"]
+    if lib["maps"]:
+        img = client.get(f"/api/maps/{lib['maps'][0]['index']}/image")
+        assert img.status_code == 200
+        assert img.headers["content-type"] == "image/png"
+    assert client.get("/api/maps/99999/image").status_code == 404

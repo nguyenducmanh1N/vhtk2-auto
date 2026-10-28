@@ -72,6 +72,14 @@ common/bag_full_icon:
   threshold: 0.88
   roi: [861, 149, 60, 60]
 
+# Dòng đỏ "Hành trang mang theo quá nhiều vật phẩm..." trong khung chat —
+# tầng CẢNH BÁO SỚM của túi nặng (giảm tốc hồi máu, chưa khoá võ công).
+# Match màu để không lẫn dòng đỏ khác; ROI = khung chat (dòng trôi theo chat)
+common/bag_heavy_notice:
+  grayscale: false
+  threshold: 0.80
+  roi: [325, 448, 330, 85]
+
 # ROI cho btn_close: X của cửa sổ lớn (túi/Hành trang...) nằm ở (921,58);
 # nút X màn bản đồ ở (852,38) trông gần giống — KHÔNG được để recovery
 # match nó rồi đóng bản đồ giữa lúc điều hướng (sự cố 2026-10-26 12:16)

@@ -808,3 +808,60 @@ def test_farm_aborts_when_skill_slot_unmeasured(tmp_path: Path) -> None:
     )
     result = FarmTask(dataclasses.replace(ctx, settings=settings)).run()
     assert result.status is TaskStatus.ABORTED
+
+
+# ---------------------------------------------------------------------------
+# mapcal — quy đổi pixel <-> toạ độ game (mảnh 2 dữ liệu map)
+# ---------------------------------------------------------------------------
+
+
+def test_mapcal_fit_and_roundtrip() -> None:
+    from vhtk.mapcal import fit_transform, max_residual
+
+    # map 385px rộng ~ 200 đơn vị toạ độ: sx≈0.52, gốc ảnh tại game-x 60
+    pairs = [((400, 110), (63, 40)), ((700, 300), (219, 173)), ((550, 200), (141, 103))]
+    t = fit_transform(pairs)
+    assert max_residual(t, pairs) <= 1.0
+    gx, gy = t.to_game(625, 250)
+    px, py = t.to_pixel(gx, gy)
+    assert abs(px - 625) <= 2 and abs(py - 250) <= 2
+
+
+def test_mapcal_rejects_degenerate_samples() -> None:
+    from vhtk.mapcal import fit_transform
+
+    with pytest.raises(ValueError, match="2 samples"):
+        fit_transform([((400, 110), (63, 40))])
+    # hai điểm cùng cột: trục x không fit được độ dốc
+    with pytest.raises(ValueError, match="identical"):
+        fit_transform([((400, 110), (63, 40)), ((400, 300), (63, 173))])
+
+
+def test_bag_full_two_tiers_and_latch(tmp_path: Path) -> None:
+    """Tầng cảnh báo sớm (dòng chat) phát hiện + latch qua vài chu kỳ;
+    tầng khoá cứng cần CẢ template icon lẫn tỉ lệ pixel đỏ."""
+    from vhtk.tasks.farm import TPL_BAG_FULL, TPL_BAG_HEAVY
+
+    vision = WorldVision(
+        present=set(),
+        store_names=ALL_TEMPLATES | {TPL_BAG_FULL, TPL_BAG_HEAVY},
+    )
+    task = FarmTask(make_ctx(tmp_path, vision, WorldDevice()))
+    frame = frame_with_hp(1.0)
+
+    # chưa có gì -> không đầy (icon không khớp, không có pixel đỏ trong ô icon)
+    assert task._bag_full(frame) is False
+
+    # thấy dòng cảnh báo sớm một lần -> True, và latch giữ True thêm
+    # bag_full_cycles chu kỳ dù dòng chat đã trôi mất
+    vision.present.add(TPL_BAG_HEAVY)
+    assert task._bag_full(frame) is True
+    vision.present.discard(TPL_BAG_HEAVY)
+    cycles = task.ctx.settings.farm.bag_full_cycles
+    for _ in range(cycles):
+        assert task._bag_full(frame) is True
+    assert task._bag_full(frame) is False  # latch đã cạn
+
+    # tầng khoá cứng: template khớp nhưng KHÔNG có pixel đỏ -> vẫn False
+    vision.present.add(TPL_BAG_FULL)
+    assert task._bag_full(frame) is False
