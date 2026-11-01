@@ -9,8 +9,10 @@ role: farm
 
 # Instance LDPlayer gắn với tài khoản này
 ldplayer:
-  # Index instance trong ldconsole (ldconsole list2)
-  index: 0
+  # Index instance trong ldconsole (ldconsole list2). ĐỂ TRỐNG (null) = acc chưa
+  # có máy -> bấm "Cấp máy mới" trên GUI để clone instance mẫu và tự gán index.
+  # Mac/AVD (manage_instances: false) không dùng trường này.
+  index: null
   # Serial ADB của instance
   adb_serial: emulator-5554
 

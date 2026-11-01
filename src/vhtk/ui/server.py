@@ -37,6 +37,7 @@ from vhtk.config_writer import (
     write_settings_farm_skills,
     write_settings_safety,
 )
+from vhtk.core.errors import VhtkError
 from vhtk.core.ldplayer import LDPlayerManager
 from vhtk.mapstore import MapStore
 from vhtk.mapstore import maps_dir as store_maps_dir
@@ -89,6 +90,13 @@ def create_app(
         # thay vì 500 trống trơn
         log.error("config error while serving", detail=str(exc))
         return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+    @app.exception_handler(VhtkError)
+    def device_error_handler(request: Request, exc: VhtkError) -> JSONResponse:
+        # ldconsole/adb lỗi (vd clone thất bại) -> trả nội dung lỗi cho GUI,
+        # không để lọt thành 500 text/plain ("Lỗi không xác định")
+        log.error("tool error while serving", path=request.url.path, detail=str(exc))
+        return JSONResponse(status_code=502, content={"detail": str(exc)})
 
     def accounts_dir() -> Path:
         # đọc lại mỗi lần để tôn trọng thay đổi settings giữa chừng

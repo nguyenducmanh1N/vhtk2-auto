@@ -276,6 +276,9 @@ class OrchestratorSettings(_StrictModel):
     # Index instance MẪU (đã cài game, 960x540/DPI 160) để `ldconsole copy`
     # khi thêm tài khoản mới; None = không cho provision
     template_instance_index: int | None = None
+    # Dung lượng ổ đĩa (GB) phải còn trống SAU khi clone; không đủ thì từ chối
+    # provision — ổ đầy làm hỏng đĩa ảo của các máy đang chạy
+    clone_headroom_gb: float = Field(ge=0, default=5.0)
     # Số instance chạy đồng thời tối đa (farm + main); mở main khi kín slot
     # thì scheduler yêu cầu tạm dừng 1 worker farm trước
     max_concurrent_instances: int = Field(gt=0, default=5)
@@ -327,7 +330,9 @@ class Settings(_StrictModel):
 
 
 class AccountLDPlayer(_StrictModel):
-    index: int = Field(ge=0)
+    # None = acc chưa được cấp máy -> chỉ "Cấp máy mới" (provision) mới gán index;
+    # tránh clone nhầm cho acc đã có instance (lỗi thực tế 28/10)
+    index: int | None = Field(default=None, ge=0)
     adb_serial: str
 
 

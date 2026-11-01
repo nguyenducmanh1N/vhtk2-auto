@@ -247,7 +247,8 @@ class WorkerSupervisor:
 
         Raises:
             OrchestratorError: instance management disabled, no template
-                instance configured, or the account is unknown/running.
+                instance configured, the account is unknown/running, or it
+                already has an instance (``ldplayer.index`` set).
         """
         if not self._cfg.manage_instances or self._ld is None:
             raise OrchestratorError("provision requires orchestrator.manage_instances: true")
@@ -259,7 +260,17 @@ class WorkerSupervisor:
         if self._registry.alive(stem):
             raise OrchestratorError(f"worker {stem!r} is already running")
         account = load_account(path)
-        index = self._ld.clone(stem, self._cfg.template_instance_index)
+        if account.ldplayer.index is not None:
+            # acc đã có máy: clone thêm chỉ tốn đĩa + để lại instance mồ côi
+            raise OrchestratorError(
+                f"account {stem!r} already has instance {account.ldplayer.index}; "
+                "provision is only for accounts without one (ldplayer.index empty)"
+            )
+        index = self._ld.clone(
+            stem,
+            self._cfg.template_instance_index,
+            headroom_bytes=int(self._cfg.clone_headroom_gb * 2**30),
+        )
         account = account.model_copy(
             update={"ldplayer": account.ldplayer.model_copy(update={"index": index})}
         )
@@ -280,6 +291,10 @@ class WorkerSupervisor:
         if self._ld is None:
             raise OrchestratorError("manage_instances is true but no LDPlayerManager given")
         index = account.ldplayer.index
+        if index is None:
+            raise OrchestratorError(
+                f"account {stem!r} has no LDPlayer instance yet — provision it first"
+            )
         if not self._ld.is_running(index):
             self._ld.start(index)
         deadline = self._clock() + self._cfg.boot_timeout
@@ -311,6 +326,8 @@ class WorkerSupervisor:
         if not path.is_file():
             return
         index = load_account(path).ldplayer.index
+        if index is None:
+            return
         try:
             if self._ld.is_running(index):
                 self._ld.stop(index)

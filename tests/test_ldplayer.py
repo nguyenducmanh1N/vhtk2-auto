@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
+import os
+import signal
+import sys
+import time
+from pathlib import Path
+
 import pytest
 
 from vhtk.core.errors import LDConsoleError
@@ -140,9 +147,18 @@ def test_set_resolution_sends_modify_when_stopped() -> None:
 class SequencedRunner:
     """list2 trả kết quả KHÁC NHAU trước/sau lệnh copy."""
 
-    def __init__(self, list2_before: str, list2_after: str) -> None:
+    def __init__(
+        self,
+        list2_before: str,
+        list2_after: str,
+        *,
+        template_running: bool = False,
+        copy_error: LDConsoleError | None = None,
+    ) -> None:
         self._before = list2_before
         self._after = list2_after
+        self._running = template_running
+        self._copy_error = copy_error
         self._copied = False
         self.calls: list[list[str]] = []
 
@@ -150,33 +166,154 @@ class SequencedRunner:
         self.calls.append(list(args))
         if args[0] == "copy":
             self._copied = True
+            if self._copy_error is not None:
+                raise self._copy_error
             return ""
         if args[0] == "list2":
             return self._after if self._copied else self._before
+        if args[0] == "isrunning":
+            return "running" if self._running else "stop"
         raise LDConsoleError(f"unexpected: {args}")
 
+    @property
+    def copied(self) -> bool:
+        return self._copied
 
-def test_clone_returns_new_index() -> None:
+
+def clone_manager(
+    tmp_path: Path, runner: SequencedRunner, *, template_bytes: int = 100, free: int = 10**12
+) -> LDPlayerManager:
+    """Manager whose vms dir holds a fake template disk (vms/leidian0)."""
+    template = tmp_path / "vms" / "leidian0"
+    template.mkdir(parents=True)
+    (template / "data.vmdk").write_bytes(b"\0" * template_bytes)
+    return LDPlayerManager(
+        "ldconsole.exe",
+        runner=runner,
+        adb_serials=lambda: [],
+        vms_dir=tmp_path / "vms",
+        free_bytes=lambda path: free,
+    )
+
+
+def test_clone_returns_new_index(tmp_path: Path) -> None:
     runner = SequencedRunner(
         "0,template,1,1,0,1,1",
         "0,template,1,1,0,1,1\n3,farm05,1,1,0,1,1",
     )
-    mgr = LDPlayerManager("ldconsole.exe", runner=runner, adb_serials=lambda: [])
-    assert mgr.clone("farm05", 0) == 3
+    assert clone_manager(tmp_path, runner).clone("farm05", 0) == 3
     assert ["copy", "--name", "farm05", "--from", "0"] in runner.calls
 
 
-def test_clone_prefers_matching_name_among_new() -> None:
+def test_clone_prefers_matching_name_among_new(tmp_path: Path) -> None:
     runner = SequencedRunner(
         "0,template,1,1,0,1,1",
         "0,template,1,1,0,1,1\n3,khac,1,1,0,1,1\n4,farm05,1,1,0,1,1",
     )
-    mgr = LDPlayerManager("ldconsole.exe", runner=runner, adb_serials=lambda: [])
-    assert mgr.clone("farm05", 0) == 4
+    assert clone_manager(tmp_path, runner).clone("farm05", 0) == 4
 
 
-def test_clone_fails_when_nothing_new() -> None:
+def test_clone_fails_when_nothing_new(tmp_path: Path) -> None:
     runner = SequencedRunner("0,template,1,1,0,1,1", "0,template,1,1,0,1,1")
-    mgr = LDPlayerManager("ldconsole.exe", runner=runner, adb_serials=lambda: [])
     with pytest.raises(LDConsoleError, match="cannot identify"):
-        mgr.clone("farm05", 0)
+        clone_manager(tmp_path, runner).clone("farm05", 0)
+
+
+def test_clone_ignores_copy_exit_code_when_list2_shows_the_clone(tmp_path: Path) -> None:
+    # đo thực tế 01/11 (LDPlayer 9): copy THÀNH CÔNG nhưng ldconsole trả exit 1,
+    # không in gì -> đây chính là lỗi "Lỗi không xác định" khi bấm "Cấp máy mới"
+    runner = SequencedRunner(
+        "0,template,1,1,0,1,1",
+        "0,template,1,1,0,1,1\n4,farm05,0,0,0,-1,-1",
+        copy_error=LDConsoleError("ldconsole copy failed (exit 1): <no output>"),
+    )
+    assert clone_manager(tmp_path, runner).clone("farm05", 0) == 4
+
+
+def test_clone_rejects_copy_that_never_got_its_name(tmp_path: Path) -> None:
+    # trong lúc copy, LDPlayer liệt kê máy mới với tên tạm "LDPlayer-N" và chỉ
+    # đổi sang tên thật khi copy XONG -> còn tên tạm = copy dở (timeout/hỏng),
+    # không được gán cho acc; báo index để người xoá máy mồ côi
+    runner = SequencedRunner(
+        "0,template,1,1,0,1,1",
+        "0,template,1,1,0,1,1\n4,LDPlayer-4,0,0,0,-1,-1",
+        copy_error=LDConsoleError("ldconsole copy timed out after 60.0s"),
+    )
+    with pytest.raises(LDConsoleError, match=r"cannot identify.*4.*LDPlayer-4.*timed out"):
+        clone_manager(tmp_path, runner).clone("farm05", 0)
+
+
+def test_clone_refuses_running_template(tmp_path: Path) -> None:
+    # copy đĩa của máy đang chạy cho ra bản sao không nhất quán (máy #5 ngày 01/11)
+    runner = SequencedRunner("0,template,1,1,1,1,1", "", template_running=True)
+    with pytest.raises(LDConsoleError, match="template instance 0 is running"):
+        clone_manager(tmp_path, runner).clone("farm05", 0)
+    assert not runner.copied
+
+
+def test_clone_refuses_when_disk_cannot_hold_copy_plus_headroom(tmp_path: Path) -> None:
+    runner = SequencedRunner("0,template,1,1,0,1,1", "")
+    mgr = clone_manager(tmp_path, runner, template_bytes=1000, free=1999)
+    with pytest.raises(LDConsoleError, match="not enough disk space"):
+        mgr.clone("farm05", 0, headroom_bytes=1000)
+    assert not runner.copied
+
+
+def test_clone_refuses_missing_template_disk(tmp_path: Path) -> None:
+    runner = SequencedRunner("0,template,1,1,0,1,1", "")
+    mgr = clone_manager(tmp_path, runner)
+    with pytest.raises(LDConsoleError, match="leidian7"):
+        mgr.clone("farm05", 7)  # không đo được dung lượng -> không đoán, không copy
+    assert not runner.copied
+
+
+def test_clone_refuses_name_that_already_exists(tmp_path: Path) -> None:
+    # lần bấm trước có thể đã tạo máy (3 máy "002" mồ côi ngày 01/11) ->
+    # gán máy đó vào YAML, đừng clone thêm
+    runner = SequencedRunner("0,template,1,1,0,1,1\n4,farm05,0,0,0,-1,-1", "")
+    with pytest.raises(LDConsoleError, match=r"'farm05' already exists \(index 4\)"):
+        clone_manager(tmp_path, runner).clone("farm05", 0)
+    assert not runner.copied
+
+
+# ---------------------------------------------------------------------------
+# real subprocess runner (sys.executable stands in for ldconsole.exe)
+# ---------------------------------------------------------------------------
+
+# Giả lập `ldconsole adb` khi adb server chưa chạy: in serial rồi thoát ngay,
+# nhưng để lại một tiến trình cháu sống lâu (như adb daemon) thừa hưởng
+# stdout/stderr của nó. Dòng cuối là PID tiến trình cháu để test dọn dẹp.
+_LEAKS_HANDLES_TO_GRANDCHILD = (
+    "import subprocess, sys\n"
+    "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(20)'],\n"
+    "                     stdout=sys.stdout.fileno(), stderr=sys.stderr.fileno())\n"
+    "print('emulator-5554')\n"
+    "print(p.pid)\n"
+)
+
+
+def test_run_returns_when_command_exits_even_if_grandchild_keeps_output_open() -> None:
+    mgr = LDPlayerManager(sys.executable)
+    started = time.monotonic()
+    out = mgr._run(["-c", _LEAKS_HANDLES_TO_GRANDCHILD])
+    elapsed = time.monotonic() - started
+    lines = out.split()
+    try:
+        assert lines[0] == "emulator-5554"
+        assert elapsed < 10.0, f"_run blocked {elapsed:.1f}s on a pipe held by a grandchild"
+    finally:
+        with contextlib.suppress(OSError):  # cháu có thể đã tự thoát
+            os.kill(int(lines[-1]), signal.SIGTERM)
+
+
+def test_run_raises_on_timeout() -> None:
+    mgr = LDPlayerManager(sys.executable)
+    mgr.COMMAND_TIMEOUT_S = 1.0
+    with pytest.raises(LDConsoleError, match="timed out"):
+        mgr._run(["-c", "import time; time.sleep(30)"])
+
+
+def test_run_raises_with_output_on_nonzero_exit() -> None:
+    mgr = LDPlayerManager(sys.executable)
+    with pytest.raises(LDConsoleError, match=r"exit 3\): no such instance"):
+        mgr._run(["-c", "import sys; sys.stderr.write('no such instance'); sys.exit(3)"])

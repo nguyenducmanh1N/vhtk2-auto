@@ -427,12 +427,29 @@ thread/process.
    sửa acc trên GUI → chỉ instance đó restart. `dry_run` BẬT lại trước khi
    chạy acc thật (27/10 đang tắt để test bán trên AVD).
 
-## Test (267 test, không cần thiết bị)
+### Sửa lỗi khi chạy thật trên Windows (2026-11-01)
+
+- **ldconsole treo vô hạn** ("Mở & đăng nhập" không mở game): khi adb server chưa
+  chạy, `ldconsole adb` bật adb daemon và daemon giữ handle pipe stdout → đọc pipe
+  chờ EOF mãi (timeout của `subprocess.run` cũng không cứu được trên Windows).
+  `LDPlayerManager._run` giờ ghi output ra file tạm và chỉ chờ tiến trình thoát.
+- **"Cấp máy mới" báo "Lỗi không xác định" + để lại máy mồ côi** (3 máy `002`,
+  2 máy `farm01`, ổ C còn 7GB): đo thực tế LDPlayer 9 — `ldconsole copy` chờ copy
+  xong (~15–30s/9GB) nhưng **trả exit 1 khi thành công** (và exit 0 khi
+  "player don't exist!"); trong lúc copy máy mới mang tên tạm `LDPlayer-N`, xong
+  mới đổi sang tên thật. `clone()` giờ bỏ qua exit code, lấy "đúng 1 máy MỚI mang
+  đúng tên" trong `list2` làm bằng chứng copy xong; trước khi copy từ chối khi máy
+  mẫu đang chạy (copy đĩa đang ghi → bản sao hỏng), thiếu dung lượng
+  (`orchestrator.clone_headroom_gb`, mặc định 5) hoặc đã có máy trùng tên. Server
+  bắt mọi `VhtkError` → 502 JSON có nội dung lỗi; GUI hiện mã HTTP khi phản hồi
+  không phải JSON. Đã dọn máy thừa, gán `002` → máy #4.
+
+## Test (281 test, không cần thiết bị)
 
 - `tests/test_config.py` — load/validate settings, thông báo lỗi thiếu key/sai kiểu.
 - `tests/test_vision.py` (37) — NMS, parse số/phân số OCR, preprocess auto-invert, detect_quality với ảnh tổng hợp, TemplateStore/find/ROI/wait trên screenshot giả.
 - `tests/test_device.py` (14) — InputGate với fake clock (delay đúng biên, rate limit chờ slot trong grace, raise `RateLimited` khi quá, kill-switch, quên lịch sử hết hạn), decode screencap (header 12/16 byte, format lạ, thiếu byte), Device với fake ADB (tap đúng lệnh + validate biên, long_press = swipe tại chỗ, reconnect hồi phục lỗi tạm, `DeviceLost` khi hết retry, screenshot không qua gate).
-- `tests/test_ldplayer.py` (13) — parse `list2` (chuẩn/mở rộng/tên có phẩy/dòng hỏng), resolve_serial (ưu tiên ldconsole, fallback đối chiếu adb, trả None thay vì đoán), start/stop/set_resolution đúng tham số.
+- `tests/test_ldplayer.py` (29) — parse `list2` (chuẩn/mở rộng/tên có phẩy/dòng hỏng), resolve_serial (ưu tiên ldconsole, fallback đối chiếu adb, trả None thay vì đoán), start/stop/set_resolution đúng tham số, clone (bỏ qua exit code, từ chối máy tên tạm/máy mẫu đang chạy/thiếu ổ/trùng tên), `_run` thật (không treo khi tiến trình cháu giữ pipe, timeout, exit ≠ 0).
 - `tests/test_safety.py` (8) — dry_run bỏ qua + lưu bằng chứng + ưu tiên hơn confirm, confirm duyệt/từ chối, trần phiên raise `SafetyLimitExceeded`, hành động bị chặn không ăn quota, kill-switch chặn guard.
 - `tests/test_recovery.py` (10) — trên TemplateStore/Vision thật với ảnh tổng hợp: màn sạch OK, đóng popup (kể cả popup lì — chạm trần 3 lần), hồi sinh, disconnect ưu tiên hơn popup thường, văng login → RELOGIN, màn lạ lưu ảnh + báo, store thiếu template không nổ lỗi.
 - `tests/test_fsm.py` (17) — happy path + recovery chạy trước mỗi state, transition không khai báo / DONE không khai báo / đồ thị sai → `TaskDefinitionError`, lỗi recoverable retry đúng state, quá quota → ABORT, reset quota sau state thành công, handler tự xin RECOVER, `DeviceLost` → ABORT thẳng kèm ảnh bằng chứng, RELOGIN ở cả 2 đường, kill-switch giữa các state và trong handler → KILLED, `recovery_resume_state` override, `relogin_is_normal`.
