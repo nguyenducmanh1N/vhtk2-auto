@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 
@@ -31,6 +32,9 @@ def workspace(tmp_path: Path) -> Path:
     text = text.replace(
         "coordinates_file: config/coordinates.yaml", f"coordinates_file: {cfg / 'coordinates.yaml'}"
     )
+    # test kho map/template viết cho dữ liệu AVD — cố định version, không theo
+    # settings.yaml của máy đang chạy (Windows trỏ v1.0 kho chưa đủ tên map)
+    text = re.sub(r"(?m)^(\s+version:)\s*\S+", r"\1 v1.0-avd", text, count=1)
     (cfg / "settings.yaml").write_text(text, encoding="utf-8")
     return cfg
 
@@ -217,6 +221,17 @@ def test_farm_skills_put_rejects_bad_slot_points(client: TestClient) -> None:
     assert client.put("/api/settings/farm-skills", json=s).status_code == 422
 
 
+def test_new_account_starts_without_instance(client: TestClient, workspace: Path) -> None:
+    # example.yaml: index null -> acc mới chỉ được "Cấp máy mới", không mượn máy #0
+    tpl = client.get("/api/accounts-template").json()
+    assert tpl["ldplayer"]["index"] is None
+    tpl["name"] = "farm02"
+    assert client.post("/api/accounts/farm02", json=tpl).status_code == 200
+    assert load_account(workspace / "accounts" / "farm02.yaml").ldplayer.index is None
+    row = next(r for r in client.get("/api/accounts").json() if r["stem"] == "farm02")
+    assert row["ldplayer_index"] is None
+
+
 def test_broken_account_file_listed_with_error(client: TestClient, workspace: Path) -> None:
     (workspace / "accounts" / "hong.yaml").write_text("name: [oops", encoding="utf-8")
     rows = client.get("/api/accounts").json()
@@ -374,6 +389,20 @@ def test_workers_orchestrator_error_mapped_to_409(
     fake_supervisor.fail_with = OrchestratorError("already running")
     r = wclient.post("/api/workers/farm01/start")
     assert r.status_code == 409 and "already running" in r.json()["detail"]
+
+
+def test_workers_device_error_reported_as_json(
+    wclient: TestClient, fake_supervisor: FakeSupervisor
+) -> None:
+    # lỗi thực tế 01/11: LDConsoleError lọt ra thành 500 text/plain ->
+    # GUI chỉ hiện "Lỗi không xác định"
+    from vhtk.core.errors import LDConsoleError
+
+    assert wclient.post("/api/accounts/farm01", json=sample_account()).status_code == 200
+    fake_supervisor.fail_with = LDConsoleError("not enough disk space to clone instance 0")
+    r = wclient.post("/api/workers/farm01/provision")
+    assert r.status_code == 502
+    assert "not enough disk space" in r.json()["detail"]
 
 
 def test_runner_endpoints_ride_on_supervisor(

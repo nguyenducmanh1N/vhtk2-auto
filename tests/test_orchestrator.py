@@ -13,6 +13,7 @@ import pytest
 
 from vhtk.config import Settings, load_settings
 from vhtk.config_writer import write_account
+from vhtk.core.errors import LDConsoleError
 from vhtk.core.ldplayer import LDPlayerManager
 from vhtk.orchestrator import Action, MainScheduler, OrchestratorError, WorkerSupervisor
 from vhtk.registry import WorkerRegistry
@@ -33,8 +34,14 @@ class FakeClock:
 
 def make_settings(tmp_path: Path, **orch: object) -> Settings:
     settings = load_settings(SETTINGS_PATH)
+    # Cố định giá trị mặc định cho test, không phụ thuộc settings.yaml của máy đang chạy
     orch_cfg = settings.orchestrator.model_copy(
-        update={"workers_dir": tmp_path / "workers", **orch}
+        update={
+            "workers_dir": tmp_path / "workers",
+            "manage_instances": False,
+            "template_instance_index": None,
+            **orch,
+        }
     )
     return settings.model_copy(
         update={
@@ -47,7 +54,7 @@ def make_settings(tmp_path: Path, **orch: object) -> Settings:
     )
 
 
-def write_test_account(tmp_path: Path, stem: str, index: int = 1) -> Path:
+def write_test_account(tmp_path: Path, stem: str, index: int | None = 1) -> Path:
     from vhtk.config import AccountConfig
 
     path = tmp_path / "accounts" / f"{stem}.yaml"
@@ -55,7 +62,7 @@ def write_test_account(tmp_path: Path, stem: str, index: int = 1) -> Path:
         {
             "name": stem,
             "role": "farm",
-            "ldplayer": {"index": index, "adb_serial": f"emulator-{5554 + 2 * index}"},
+            "ldplayer": {"index": index, "adb_serial": f"emulator-{5554 + 2 * (index or 0)}"},
             "login": {"server": "S9", "username": "u", "password": "p"},
             "farm": {"map": "Tuyền Châu", "gold_transfer_threshold": 0},
         }
@@ -192,14 +199,30 @@ def test_restart_stops_then_starts(tmp_path: Path) -> None:
     assert h.registry.alive("farm01")
 
 
-def fake_ld(instances: dict[int, bool], clone_index: int | None = None) -> LDPlayerManager:
+def template_vms(tmp_path: Path, index: int = 0, size: int = 100) -> Path:
+    """Fake LDPlayer ``vms`` dir holding the template instance's disk."""
+    disk = tmp_path / "vms" / f"leidian{index}"
+    disk.mkdir(parents=True)
+    (disk / "data.vmdk").write_bytes(b"\0" * size)
+    return tmp_path / "vms"
+
+
+def fake_ld(
+    instances: dict[int, bool],
+    clone_index: int | None = None,
+    *,
+    vms_dir: Path | None = None,
+    free: int = 10**15,
+) -> LDPlayerManager:
     """LDPlayerManager over a fake ldconsole: list2/isrunning/launch/copy."""
+    names: dict[int, str] = {}
 
     def runner(args: list[str]) -> str:
         cmd = args[0]
         if cmd == "list2":
             return "\n".join(
-                f"{i},inst{i},0,0,{int(running)},1,1" for i, running in sorted(instances.items())
+                f"{i},{names.get(i, f'inst{i}')},0,0,{int(running)},1,1"
+                for i, running in sorted(instances.items())
             )
         if cmd == "isrunning":
             return "running" if instances.get(int(args[2]), False) else "stop"
@@ -212,12 +235,19 @@ def fake_ld(instances: dict[int, bool], clone_index: int | None = None) -> LDPla
         if cmd == "copy":
             assert clone_index is not None
             instances[clone_index] = False
+            names[clone_index] = args[2]  # LDPlayer đặt tên thật khi copy xong
             return ""
         if cmd == "adb":  # get-serialno
             return f"emulator-{5554 + 2 * int(args[2])}\n"
         raise AssertionError(f"unexpected ldconsole command: {args}")
 
-    return LDPlayerManager("ldconsole.exe", runner=runner, adb_serials=list)
+    return LDPlayerManager(
+        "ldconsole.exe",
+        runner=runner,
+        adb_serials=list,
+        vms_dir=vms_dir,
+        free_bytes=lambda path: free,
+    )
 
 
 def test_managed_start_launches_instance_and_fixes_serial(tmp_path: Path) -> None:
@@ -249,15 +279,62 @@ def test_provision_clones_template_and_starts(tmp_path: Path) -> None:
     settings = make_settings(
         tmp_path, manage_instances=True, template_instance_index=0
     )
-    path = write_test_account(tmp_path, "farm09", index=1)
+    path = write_test_account(tmp_path, "farm09", index=None)  # acc chưa có máy
     instances = {0: False}
-    h = Harness(tmp_path, settings, ld=fake_ld(instances, clone_index=7))
+    ld = fake_ld(instances, clone_index=7, vms_dir=template_vms(tmp_path))
+    h = Harness(tmp_path, settings, ld=ld)
     h.supervisor.provision("farm09")
     from vhtk.config import load_account
 
     acc = load_account(path)
     assert acc.ldplayer.index == 7  # index mới ghi vào YAML
     assert h.registry.alive("farm09")
+
+
+def test_provision_keeps_disk_headroom_from_config(tmp_path: Path) -> None:
+    # ổ C còn 7GB mà mỗi bản clone ~8.7GB (01/11): clone tiếp sẽ làm đầy ổ và
+    # có thể hỏng đĩa ảo của các máy đang chạy
+    settings = make_settings(
+        tmp_path, manage_instances=True, template_instance_index=0, clone_headroom_gb=1.0
+    )
+    path = write_test_account(tmp_path, "farm09", index=None)
+    instances = {0: False}
+    ld = fake_ld(
+        instances, clone_index=7, vms_dir=template_vms(tmp_path, size=100), free=100 + 2**30 - 1
+    )
+    h = Harness(tmp_path, settings, ld=ld)
+    with pytest.raises(LDConsoleError, match="not enough disk space"):
+        h.supervisor.provision("farm09")
+    from vhtk.config import load_account
+
+    assert instances == {0: False}  # không copy
+    assert load_account(path).ldplayer.index is None
+    assert h.spawned == []
+
+
+def test_provision_refuses_account_that_already_has_instance(tmp_path: Path) -> None:
+    # lỗi thực tế 28/10: bấm "Cấp máy mới" cho acc đang dùng instance 0
+    # -> clone ~5GB thừa + instance mồ côi
+    settings = make_settings(tmp_path, manage_instances=True, template_instance_index=0)
+    path = write_test_account(tmp_path, "farm01", index=0)
+    instances = {0: False}
+    h = Harness(tmp_path, settings, ld=fake_ld(instances))  # copy -> AssertionError
+    with pytest.raises(OrchestratorError, match="already has instance 0"):
+        h.supervisor.provision("farm01")
+    assert instances == {0: False}  # không clone gì
+    from vhtk.config import load_account
+
+    assert load_account(path).ldplayer.index == 0
+
+
+def test_managed_start_rejects_account_without_instance(tmp_path: Path) -> None:
+    settings = make_settings(tmp_path, manage_instances=True)
+    write_test_account(tmp_path, "farm02", index=None)
+    h = Harness(tmp_path, settings, ld=fake_ld({0: False}))
+    with pytest.raises(OrchestratorError, match="provision it first"):
+        h.supervisor.start("farm02")
+    assert h.spawned == []
+    h.supervisor.stop("farm02")  # dừng acc chưa có máy: không lỗi, không quit gì
 
 
 def test_provision_requires_config(tmp_path: Path) -> None:

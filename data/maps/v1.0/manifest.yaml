@@ -1,0 +1,630 @@
+template_version: v1.0
+map_image_rect:
+- 395
+- 105
+- 385
+- 315
+maps:
+- index: 0
+  name: Tuyền Châu
+  files:
+    map: 000_map.png
+    row: 000_row.png
+    title: 000_title.png
+  page: 0
+  calibration:
+    sx: 0.09375
+    ox: 126.302
+    sy: 0.087302
+    oy: 163.833
+    pairs: 3
+    max_residual: 1
+- index: 1
+  name: Đào Hoa đảo
+  files:
+    map: 001_map.png
+    row: 001_row.png
+    title: 001_title.png
+  page: 0
+- index: 2
+  name: Đông Hải Hải Tân 1
+  files:
+    map: 002_map.png
+    row: 002_row.png
+    title: 002_title.png
+  page: 0
+- index: 3
+  name: Đông Hải Hải Tân 2
+  files:
+    map: 003_map.png
+    row: 003_row.png
+    title: 003_title.png
+  page: 0
+- index: 4
+  name: Tây Tuyền Châu
+  files:
+    map: 004_map.png
+    row: 004_row.png
+    title: 004_title.png
+  page: 0
+- index: 5
+  name: Long Tuyền Thôn
+  files:
+    map: 005_map.png
+    row: 005_row.png
+    title: 005_title.png
+  page: 0
+- index: 6
+  name: Vũ Di sơn
+  files:
+    map: 006_map.png
+    row: 006_row.png
+    title: 006_title.png
+  page: 0
+- index: 7
+  name: Bắc Tuyền Châu
+  files:
+    map: 007_map.png
+    row: 007_row.png
+    title: 007_title.png
+  page: 0
+- index: 8
+  name: Thanh Âm động_1
+  files:
+    map: 008_map.png
+    row: 008_row.png
+    title: 008_title.png
+  page: 0
+- index: 9
+  name: Thanh Âm động_2
+  files:
+    map: 009_map.png
+    row: 009_row.png
+    title: 009_title.png
+  page: 0
+- index: 10
+  name: Thanh Khê động
+  files:
+    map: 010_map.png
+    row: 010_row.png
+    title: 010_title.png
+  page: 0
+- index: 11
+  name: ''
+  files:
+    map: 011_map.png
+    row: 011_row.png
+    title: 011_title.png
+  page: 1
+- index: 12
+  name: ''
+  files:
+    map: 012_map.png
+    row: 012_row.png
+    title: 012_title.png
+  page: 1
+- index: 13
+  name: ''
+  files:
+    map: 013_map.png
+    row: 013_row.png
+    title: 013_title.png
+  page: 1
+- index: 14
+  name: ''
+  files:
+    map: 014_map.png
+    row: 014_row.png
+    title: 014_title.png
+  page: 1
+- index: 15
+  name: ''
+  files:
+    map: 015_map.png
+    row: 015_row.png
+    title: 015_title.png
+  page: 1
+- index: 16
+  name: ''
+  files:
+    map: 016_map.png
+    row: 016_row.png
+    title: 016_title.png
+  page: 1
+- index: 17
+  name: ''
+  files:
+    map: 017_map.png
+    row: 017_row.png
+    title: 017_title.png
+  page: 1
+- index: 18
+  name: ''
+  files:
+    map: 018_map.png
+    row: 018_row.png
+    title: 018_title.png
+  page: 1
+- index: 19
+  name: ''
+  files:
+    map: 019_map.png
+    row: 019_row.png
+    title: 019_title.png
+  page: 1
+- index: 20
+  name: ''
+  files:
+    map: 020_map.png
+    row: 020_row.png
+    title: 020_title.png
+  page: 1
+- index: 21
+  name: ''
+  files:
+    map: 021_map.png
+    row: 021_row.png
+    title: 021_title.png
+  page: 1
+- index: 22
+  name: ''
+  files:
+    map: 022_map.png
+    row: 022_row.png
+    title: 022_title.png
+  page: 2
+- index: 23
+  name: ''
+  files:
+    map: 023_map.png
+    row: 023_row.png
+    title: 023_title.png
+  page: 2
+- index: 24
+  name: ''
+  files:
+    map: 024_map.png
+    row: 024_row.png
+    title: 024_title.png
+  page: 2
+- index: 25
+  name: ''
+  files:
+    map: 025_map.png
+    row: 025_row.png
+    title: 025_title.png
+  page: 2
+- index: 26
+  name: ''
+  files:
+    map: 026_map.png
+    row: 026_row.png
+    title: 026_title.png
+  page: 2
+- index: 27
+  name: ''
+  files:
+    map: 027_map.png
+    row: 027_row.png
+    title: 027_title.png
+  page: 2
+- index: 28
+  name: ''
+  files:
+    map: 028_map.png
+    row: 028_row.png
+    title: 028_title.png
+  page: 2
+- index: 29
+  name: ''
+  files:
+    map: 029_map.png
+    row: 029_row.png
+    title: 029_title.png
+  page: 2
+- index: 30
+  name: ''
+  files:
+    map: 030_map.png
+    row: 030_row.png
+    title: 030_title.png
+  page: 2
+- index: 31
+  name: ''
+  files:
+    map: 031_map.png
+    row: 031_row.png
+    title: 031_title.png
+  page: 2
+- index: 32
+  name: ''
+  files:
+    map: 032_map.png
+    row: 032_row.png
+    title: 032_title.png
+  page: 2
+- index: 33
+  name: ''
+  files:
+    map: 033_map.png
+    row: 033_row.png
+    title: 033_title.png
+  page: 3
+- index: 34
+  name: ''
+  files:
+    map: 034_map.png
+    row: 034_row.png
+    title: 034_title.png
+  page: 3
+- index: 35
+  name: ''
+  files:
+    map: 035_map.png
+    row: 035_row.png
+    title: 035_title.png
+  page: 3
+- index: 36
+  name: ''
+  files:
+    map: 036_map.png
+    row: 036_row.png
+    title: 036_title.png
+  page: 3
+- index: 37
+  name: ''
+  files:
+    map: 037_map.png
+    row: 037_row.png
+    title: 037_title.png
+  page: 3
+- index: 38
+  name: ''
+  files:
+    map: 038_map.png
+    row: 038_row.png
+    title: 038_title.png
+  page: 3
+- index: 39
+  name: ''
+  files:
+    map: 039_map.png
+    row: 039_row.png
+    title: 039_title.png
+  page: 3
+- index: 40
+  name: ''
+  files:
+    map: 040_map.png
+    row: 040_row.png
+    title: 040_title.png
+  page: 3
+- index: 41
+  name: ''
+  files:
+    map: 041_map.png
+    row: 041_row.png
+    title: 041_title.png
+  page: 3
+- index: 42
+  name: ''
+  files:
+    map: 042_map.png
+    row: 042_row.png
+    title: 042_title.png
+  page: 3
+- index: 43
+  name: ''
+  files:
+    map: 043_map.png
+    row: 043_row.png
+    title: 043_title.png
+  page: 3
+- index: 44
+  name: ''
+  files:
+    map: 044_map.png
+    row: 044_row.png
+    title: 044_title.png
+  page: 4
+- index: 45
+  name: ''
+  files:
+    map: 045_map.png
+    row: 045_row.png
+    title: 045_title.png
+  page: 4
+- index: 46
+  name: ''
+  files:
+    map: 046_map.png
+    row: 046_row.png
+    title: 046_title.png
+  page: 4
+- index: 47
+  name: ''
+  files:
+    map: 047_map.png
+    row: 047_row.png
+    title: 047_title.png
+  page: 4
+- index: 48
+  name: ''
+  files:
+    map: 048_map.png
+    row: 048_row.png
+    title: 048_title.png
+  page: 4
+- index: 49
+  name: ''
+  files:
+    map: 049_map.png
+    row: 049_row.png
+    title: 049_title.png
+  page: 4
+- index: 50
+  name: ''
+  files:
+    map: 050_map.png
+    row: 050_row.png
+    title: 050_title.png
+  page: 4
+- index: 51
+  name: ''
+  files:
+    map: 051_map.png
+    row: 051_row.png
+    title: 051_title.png
+  page: 4
+- index: 52
+  name: ''
+  files:
+    map: 052_map.png
+    row: 052_row.png
+    title: 052_title.png
+  page: 4
+- index: 53
+  name: ''
+  files:
+    map: 053_map.png
+    row: 053_row.png
+    title: 053_title.png
+  page: 4
+- index: 54
+  name: ''
+  files:
+    map: 054_map.png
+    row: 054_row.png
+    title: 054_title.png
+  page: 4
+- index: 55
+  name: ''
+  files:
+    map: 055_map.png
+    row: 055_row.png
+    title: 055_title.png
+  page: 5
+- index: 56
+  name: ''
+  files:
+    map: 056_map.png
+    row: 056_row.png
+    title: 056_title.png
+  page: 5
+- index: 57
+  name: ''
+  files:
+    map: 057_map.png
+    row: 057_row.png
+    title: 057_title.png
+  page: 5
+- index: 58
+  name: ''
+  files:
+    map: 058_map.png
+    row: 058_row.png
+    title: 058_title.png
+  page: 5
+- index: 59
+  name: ''
+  files:
+    map: 059_map.png
+    row: 059_row.png
+    title: 059_title.png
+  page: 5
+- index: 60
+  name: ''
+  files:
+    map: 060_map.png
+    row: 060_row.png
+    title: 060_title.png
+  page: 5
+- index: 61
+  name: ''
+  files:
+    map: 061_map.png
+    row: 061_row.png
+    title: 061_title.png
+  page: 5
+- index: 62
+  name: ''
+  files:
+    map: 062_map.png
+    row: 062_row.png
+    title: 062_title.png
+  page: 5
+- index: 63
+  name: ''
+  files:
+    map: 063_map.png
+    row: 063_row.png
+    title: 063_title.png
+  page: 5
+- index: 64
+  name: ''
+  files:
+    map: 064_map.png
+    row: 064_row.png
+    title: 064_title.png
+  page: 5
+- index: 65
+  name: ''
+  files:
+    map: 065_map.png
+    row: 065_row.png
+    title: 065_title.png
+  page: 5
+- index: 66
+  name: ''
+  files:
+    map: 066_map.png
+    row: 066_row.png
+    title: 066_title.png
+  page: 6
+- index: 67
+  name: ''
+  files:
+    map: 067_map.png
+    row: 067_row.png
+    title: 067_title.png
+  page: 6
+- index: 68
+  name: ''
+  files:
+    map: 068_map.png
+    row: 068_row.png
+    title: 068_title.png
+  page: 6
+- index: 69
+  name: ''
+  files:
+    map: 069_map.png
+    row: 069_row.png
+    title: 069_title.png
+  page: 6
+- index: 70
+  name: ''
+  files:
+    map: 070_map.png
+    row: 070_row.png
+    title: 070_title.png
+  page: 6
+- index: 71
+  name: ''
+  files:
+    map: 071_map.png
+    row: 071_row.png
+    title: 071_title.png
+  page: 6
+- index: 72
+  name: ''
+  files:
+    map: 072_map.png
+    row: 072_row.png
+    title: 072_title.png
+  page: 6
+- index: 73
+  name: ''
+  files:
+    map: 073_map.png
+    row: 073_row.png
+    title: 073_title.png
+  page: 6
+- index: 74
+  name: ''
+  files:
+    map: 074_map.png
+    row: 074_row.png
+    title: 074_title.png
+  page: 6
+- index: 75
+  name: ''
+  files:
+    map: 075_map.png
+    row: 075_row.png
+    title: 075_title.png
+  page: 6
+- index: 76
+  name: ''
+  files:
+    map: 076_map.png
+    row: 076_row.png
+    title: 076_title.png
+  page: 6
+- index: 77
+  name: ''
+  files:
+    map: 077_map.png
+    row: 077_row.png
+    title: 077_title.png
+  page: 7
+- index: 78
+  name: ''
+  files:
+    map: 078_map.png
+    row: 078_row.png
+    title: 078_title.png
+  page: 7
+- index: 79
+  name: ''
+  files:
+    map: 079_map.png
+    row: 079_row.png
+    title: 079_title.png
+  page: 7
+- index: 80
+  name: ''
+  files:
+    map: 080_map.png
+    row: 080_row.png
+    title: 080_title.png
+  page: 7
+- index: 81
+  name: ''
+  files:
+    map: 081_map.png
+    row: 081_row.png
+    title: 081_title.png
+  page: 7
+- index: 82
+  name: ''
+  files:
+    map: 082_map.png
+    row: 082_row.png
+    title: 082_title.png
+  page: 7
+- index: 83
+  name: ''
+  files:
+    map: 083_map.png
+    row: 083_row.png
+    title: 083_title.png
+  page: 7
+- index: 84
+  name: ''
+  files:
+    map: 084_map.png
+    row: 084_row.png
+    title: 084_title.png
+  page: 7
+- index: 85
+  name: ''
+  files:
+    map: 085_map.png
+    row: 085_row.png
+    title: 085_title.png
+  page: 7
+- index: 86
+  name: ''
+  files:
+    map: 086_map.png
+    row: 086_row.png
+    title: 086_title.png
+  page: 7
+- index: 87
+  name: ''
+  files:
+    map: 087_map.png
+    row: 087_row.png
+    title: 087_title.png
+  page: 7

@@ -21,7 +21,7 @@ templates:
   dir: templates
   # Phiên bản template đang dùng — khi game update thì tạo version mới, trỏ lại đây
   # (v1.0-avd: chụp trên AVD Mac để dev; v1.0: sẽ chụp trên LDPlayer Windows ở W1)
-  version: v1.0-avd
+  version: v1.0
   # Ngưỡng match template (0..1); dưới ngưỡng coi như không tìm thấy
   match_threshold: 0.85
 
@@ -46,7 +46,7 @@ ocr:
 safety:
   # Chế độ khô: BẬT mặc định — không thực hiện hành động không thể hoàn tác
   # (bán, mua, giao dịch), thay vào đó chụp màn + ghi log
-  dry_run: false # tắt 2026-10-27 để test bán thật trên AVD — bật lại khi sang production
+  dry_run: true # bật lại 2026-10-28 khi chuyển sang LDPlayer Windows (HOWTORUN bước 3.1)
   # Với bán đồ / chuyển vàng: gửi ảnh lên Telegram, chờ người xác nhận
   # (bật mặc định trong 5 phiên chạy đầu)
   confirm_mode: false # tắt cùng dry_run 27/10: notifier còn là Null (chưa nối Telegram) — bật lại khi có 5a
@@ -228,10 +228,15 @@ login:
 orchestrator:
   # Có điều khiển vòng đời instance LDPlayer qua ldconsole hay không.
   # Mac dev (AVD chạy sẵn): false. Server Windows: true.
-  manage_instances: false
+  manage_instances: true
   # Index instance MẪU (đã cài game, 960x540/DPI 160) để `ldconsole copy`
   # khi thêm tài khoản mới qua GUI; bỏ trống = không cho provision
-  template_instance_index: null
+  template_instance_index: 0
+  # Dung lượng ổ đĩa (GB) phải còn trống SAU khi clone; không đủ thì từ chối
+  # "Cấp máy mới" (mỗi bản clone ~ dung lượng máy mẫu, hiện ~9GB). Mặc định 5;
+  # bỏ dấu # để đổi — CHỈ sau khi đã khởi động lại GUI chạy code mới (GUI cũ
+  # không biết khoá này và sẽ báo lỗi config)
+  # clone_headroom_gb: 5
   # Số instance chạy đồng thời tối đa (farm + main on-demand)
   max_concurrent_instances: 5
   # Chờ Android boot xong sau `ldconsole launch` (giây)
