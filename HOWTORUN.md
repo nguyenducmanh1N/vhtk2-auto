@@ -16,7 +16,8 @@ Tài liệu liên quan: `PLAN.md` (thiết kế + DoD từng giai đoạn), `PRO
    chạy — kiểm tra ĐẦU TIÊN, kẻo cài hết rồi mới phát hiện.
 2. Cài **Git** và **Python 3.11+** (tick *Add python.exe to PATH* khi cài).
 3. Cài **LDPlayer 9** — mặc định `C:\LDPlayer\LDPlayer9\`. Cài chỗ khác thì
-   sửa `ldplayer.ldconsole_path` trong `config\settings.yaml`.
+   ghi `ldplayer.ldconsole_path` vào `config\settings.local.yaml` (file cấu
+   hình riêng máy, không commit — mẫu: `config\settings.local.example.yaml`).
 4. **Thêm adb vào PATH** (code gọi `adb` trực tiếp ở vài chỗ): LDPlayer có
    sẵn `adb.exe` trong thư mục cài — thêm `C:\LDPlayer\LDPlayer9` vào PATH,
    mở cmd MỚI, gõ `adb version` phải ra kết quả.
@@ -55,12 +56,14 @@ Tài liệu liên quan: `PLAN.md` (thiết kế + DoD từng giai đoạn), `PRO
    ```bat
    "C:\LDPlayer\LDPlayer9\ldconsole.exe" list2
    ```
-3. Sửa `config\settings.yaml`, mục `orchestrator`:
+3. Kiểm mục `orchestrator` — `settings.yaml` đã để sẵn giá trị Windows
+   (`manage_instances: true`, `template_instance_index: 0`). Instance mẫu KHÔNG
+   phải index 0 thì ghi đè trong `config\settings.local.yaml`, đừng sửa
+   settings.yaml (file commit dùng chung, sửa là đè cấu hình máy khác):
 
    ```yaml
    orchestrator:
-     manage_instances: true        # Windows: orchestrator tự mở/tắt instance
-     template_instance_index: 0    # index instance mẫu vừa xem ở trên
+     template_instance_index: 3    # index instance mẫu vừa xem ở trên
    ```
 4. Smoke tầng thiết bị (instance đang mở):
 
@@ -87,7 +90,8 @@ Template `v1.0-avd` chụp trên AVD Mac **sẽ không khớp** trên LDPlayer
    chỉ thay ảnh).
 3. Quét lại kho map trên LDPlayer: `python tools\harvest_maps.py`; hiệu
    chuẩn map chính: `python tools\calibrate_map.py`.
-4. Đổi `templates.version: v1.0` trong settings.yaml, rồi:
+4. `templates.version` trong settings.yaml đã là `v1.0` (máy Mac đè thành
+   `v1.0-avd` qua settings.local.yaml của nó), chạy:
 
    ```bat
    python tools\template_check.py

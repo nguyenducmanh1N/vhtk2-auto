@@ -29,6 +29,9 @@ logs/
 config/accounts/*.yaml
 !config/accounts/example.yaml
 
+# Cấu hình riêng từng máy (gộp đè lên settings.yaml) — mẫu: settings.local.example.yaml
+config/*.local.yaml
+
 # Template ảnh PHẢI được commit (không ignore *.png ở bất kỳ đâu)
 !templates/**/*.png
 

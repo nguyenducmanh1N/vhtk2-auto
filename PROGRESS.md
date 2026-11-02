@@ -444,6 +444,19 @@ thread/process.
   bắt mọi `VhtkError` → 502 JSON có nội dung lỗi; GUI hiện mã HTTP khi phản hồi
   không phải JSON. Đã dọn máy thừa, gán `002` → máy #4.
 
+### Cấu hình riêng từng máy — `settings.local.yaml` (2026-11-02)
+
+- Vấn đề: Mac (AVD) và Windows (LDPlayer) dùng chung `settings.yaml` trong git
+  -> mỗi lần pull/commit 3 khoá `templates.version`, `orchestrator.manage_instances`,
+  `orchestrator.template_instance_index` bị đè qua lại.
+- `settings.yaml` (commit) = cấu hình PRODUCTION Windows. `config/settings.local.yaml`
+  (gitignore, mẫu `settings.local.example.yaml`) chỉ ghi khoá khác đi trên máy đó;
+  `load_settings` gộp đè từng khoá rồi mới validate (gõ sai khoá trong file local
+  vẫn bị báo, thông báo lỗi nêu tên cả 2 file). Máy Windows không cần file local.
+- GUI ghi tab An toàn/Chiêu: khoá đang có trong file local thì ghi VÀO file local
+  (ghi vào settings.yaml sẽ bị đè — trông như lưu không ăn), còn lại vào settings.yaml.
+- PHẢI restart GUI/worker sau khi pull (code cũ không biết file local).
+
 ## Test (281 test, không cần thiết bị)
 
 - `tests/test_config.py` — load/validate settings, thông báo lỗi thiếu key/sai kiểu.

@@ -415,3 +415,40 @@ def test_runner_endpoints_ride_on_supervisor(
     assert r.status_code == 200 and r.json()["pid"] == 4243
     s2 = wclient.get("/api/runner").json()
     assert s2["running"] is True and s2["stems"] == ["farm01"]
+
+
+def test_write_settings_routes_overridden_keys_to_local(workspace: Path) -> None:
+    from vhtk.config import FarmSkillSettings
+
+    settings_path = workspace / "settings.yaml"
+    local_path = workspace / "settings.local.yaml"
+    local_path.write_text(
+        "# máy dev\nsafety:\n  dry_run: true  # giữ comment\n", encoding="utf-8"
+    )
+    before = load_settings(settings_path)
+    base_dry_run = pyyaml.safe_load(settings_path.read_text(encoding="utf-8"))["safety"]["dry_run"]
+    safety = before.safety.model_copy(update={"dry_run": False, "max_actions_per_minute": 77})
+
+    write_settings_safety(settings_path, safety)
+
+    after = load_settings(settings_path)
+    assert after.safety.dry_run is False
+    assert after.safety.max_actions_per_minute == 77
+    # dry_run đang bị file local đè -> ghi vào file local, không đụng settings.yaml
+    local = pyyaml.safe_load(local_path.read_text(encoding="utf-8"))
+    assert local == {"safety": {"dry_run": False}}
+    assert "giữ comment" in local_path.read_text(encoding="utf-8")
+    base = pyyaml.safe_load(settings_path.read_text(encoding="utf-8"))
+    assert base["safety"]["dry_run"] is base_dry_run
+    assert base["safety"]["max_actions_per_minute"] == 77
+
+    # section không có trong file local -> file local giữ nguyên
+    local_text = local_path.read_text(encoding="utf-8")
+    from vhtk.config_writer import write_settings_farm_skills
+
+    skills = FarmSkillSettings.model_validate(
+        after.farm.skills.model_dump() | {"cast_interval": 3.0}
+    )
+    write_settings_farm_skills(settings_path, skills)
+    assert local_path.read_text(encoding="utf-8") == local_text
+    assert load_settings(settings_path).farm.skills.cast_interval == 3.0
