@@ -24,6 +24,8 @@ from vhtk.config import (
     FarmSkillSettings,
     SafetySettings,
     Settings,
+    deep_merge,
+    local_settings_path,
 )
 
 _yaml = YAML()
@@ -32,11 +34,13 @@ _yaml.preserve_quotes = True
 _yaml.indent(mapping=2, sequence=4, offset=2)
 
 
-def _load_round_trip(path: Path) -> CommentedMap:
+def _load_round_trip(path: Path, *, allow_empty: bool = False) -> CommentedMap:
     try:
         data = _yaml.load(path.read_text(encoding="utf-8"))
     except Exception as exc:  # ruamel ném nhiều loại lỗi parse khác nhau
         raise ConfigError(f"invalid YAML in {path}: {exc}") from exc
+    if data is None and allow_empty:
+        return CommentedMap()
     if not isinstance(data, CommentedMap):
         raise ConfigError(f"config file {path} must contain a YAML mapping at top level")
     return data
@@ -76,45 +80,93 @@ def write_account(path: Path, account: AccountConfig, template: Path | None = No
 
 
 def write_settings_safety(settings_path: Path, safety: SafetySettings) -> None:
-    """Update ONLY the ``safety`` section of settings.yaml, keeping comments.
+    """Update ONLY the ``safety`` section of the settings, keeping comments.
 
-    The merged document is re-validated as a whole ``Settings`` before the
+    The merged document is re-validated as a whole ``Settings`` before any
     file is touched, so a partial edit can never corrupt the config.
 
     Raises:
         ConfigError: if the merged document fails schema validation.
     """
-    base = _load_round_trip(settings_path)
-    if "safety" not in base or not isinstance(base["safety"], CommentedMap):
-        base["safety"] = CommentedMap()
-    _apply(base["safety"], safety.model_dump(mode="json"))
-    # validate toàn văn bản sau khi gộp — hỏng thì KHÔNG ghi file
-    plain = _yaml.load(io.StringIO(_dump_to_str(base)))
-    try:
-        Settings.model_validate(plain)
-    except Exception as exc:
-        raise ConfigError(f"merged settings would be invalid: {exc}") from exc
-    _dump(base, settings_path)
+    _write_settings_section(settings_path, ("safety",), safety.model_dump(mode="json"))
 
 
 def write_settings_farm_skills(settings_path: Path, skills: FarmSkillSettings) -> None:
-    """Update ONLY ``farm.skills`` of settings.yaml, keeping comments.
+    """Update ONLY ``farm.skills`` of the settings, keeping comments.
 
     Raises:
         ConfigError: if the merged document fails schema validation.
     """
+    _write_settings_section(settings_path, ("farm", "skills"), skills.model_dump(mode="json"))
+
+
+def _write_settings_section(
+    settings_path: Path, section: tuple[str, ...], values: dict[str, Any]
+) -> None:
+    """Write ``values`` under ``section``, each leaf to the file that owns it.
+
+    A key already overridden in ``settings.local.yaml`` is updated THERE —
+    writing it to settings.yaml would be silently shadowed by the override.
+    Every other key goes to settings.yaml.
+    """
     base = _load_round_trip(settings_path)
-    if "farm" not in base or not isinstance(base["farm"], CommentedMap):
-        base["farm"] = CommentedMap()
-    if "skills" not in base["farm"] or not isinstance(base["farm"]["skills"], CommentedMap):
-        base["farm"]["skills"] = CommentedMap()
-    _apply(base["farm"]["skills"], skills.model_dump(mode="json"))
-    plain = _yaml.load(io.StringIO(_dump_to_str(base)))
+    local_path = local_settings_path(settings_path)
+    local = _load_round_trip(local_path, allow_empty=True) if local_path.is_file() else None
+    base_node = _ensure_map(base, section)
+    local_node = _find_map(local, section)
+    _apply_split(base_node, local_node, values)
+    merged = deep_merge(_plain(base), _plain(local) if local is not None else {})
     try:
-        Settings.model_validate(plain)
+        Settings.model_validate(merged)
     except Exception as exc:
         raise ConfigError(f"merged settings would be invalid: {exc}") from exc
     _dump(base, settings_path)
+    if local is not None and local_node is not None:
+        _dump(local, local_path)
+
+
+def _ensure_map(root: CommentedMap, section: tuple[str, ...]) -> CommentedMap:
+    node = root
+    for key in section:
+        if not isinstance(node.get(key), CommentedMap):
+            node[key] = CommentedMap()
+        node = node[key]
+    return node
+
+
+def _find_map(root: CommentedMap | None, section: tuple[str, ...]) -> CommentedMap | None:
+    node = root
+    for key in section:
+        if node is None:
+            return None
+        child = node.get(key)
+        node = child if isinstance(child, CommentedMap) else None
+    return node
+
+
+def _apply_split(
+    base: CommentedMap, local: CommentedMap | None, values: dict[str, Any]
+) -> None:
+    """Like :func:`_apply`, but leaves present in ``local`` are written there."""
+    for key, value in values.items():
+        local_child = local.get(key) if local is not None else None
+        if isinstance(value, dict):
+            if not isinstance(base.get(key), CommentedMap):
+                base[key] = CommentedMap()
+            _apply_split(
+                base[key],
+                local_child if isinstance(local_child, CommentedMap) else None,
+                value,
+            )
+        elif local is not None and key in local:
+            local[key] = value
+        else:
+            base[key] = value
+
+
+def _plain(data: CommentedMap) -> dict[str, Any]:
+    plain = _yaml.load(io.StringIO(_dump_to_str(data)))
+    return plain if isinstance(plain, dict) else {}
 
 
 def write_coordinates_skill_slots(

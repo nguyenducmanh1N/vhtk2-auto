@@ -1,0 +1,26 @@
+# =====================================================================
+# Mẫu cấu hình RIÊNG TỪNG MÁY — chép thành config/settings.local.yaml
+# (file local KHÔNG commit, đã nằm trong .gitignore).
+#
+# settings.yaml (commit) giữ cấu hình PRODUCTION = server Windows/LDPlayer.
+# settings.local.yaml chỉ ghi những khoá khác đi trên máy này; khi load, nó
+# được gộp đè lên settings.yaml theo từng khoá (khoá không ghi = giữ nguyên).
+# Gõ sai tên khoá vẫn bị báo lỗi như settings.yaml.
+#
+# GUI (tab An toàn / Chiêu) sửa khoá nào đang có trong file local thì ghi
+# vào file local, khoá còn lại ghi vào settings.yaml.
+# =====================================================================
+
+# ---- Máy Mac dev (AVD vhtk2-dev) -------------------------------------
+templates:
+  version: v1.0-avd
+orchestrator:
+  manage_instances: false
+  template_instance_index: null
+
+# ---- Máy Windows (LDPlayer) — thường KHÔNG cần file local; chỉ ghi khi
+# máy này khác mặc định, ví dụ cài LDPlayer ở ổ khác:
+# ldplayer:
+#   ldconsole_path: 'D:\LDPlayer\LDPlayer9\ldconsole.exe'
+# orchestrator:
+#   template_instance_index: 3

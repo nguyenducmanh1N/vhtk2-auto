@@ -493,18 +493,60 @@ def _format_validation_error(path: Path, exc: ValidationError) -> str:
     return "\n".join(lines)
 
 
+def local_settings_path(path: Path) -> Path:
+    """Per-machine override file next to ``path`` (``settings.local.yaml``)."""
+    return path.with_name(f"{path.stem}.local{path.suffix}")
+
+
+def read_local_overrides(path: Path) -> dict[str, Any]:
+    """Overrides from the local file of ``path``; ``{}`` when absent or empty.
+
+    Raises:
+        ConfigError: the local file is not valid YAML or not a mapping.
+    """
+    local = local_settings_path(path)
+    if not local.is_file():
+        return {}
+    try:
+        data = yaml.safe_load(local.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"invalid YAML in {local}: {exc}") from exc
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ConfigError(f"config file {local} must contain a YAML mapping at top level")
+    return data
+
+
+def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Return ``base`` with ``override`` applied key by key (lists are replaced)."""
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 def load_settings(path: Path = DEFAULT_SETTINGS_PATH) -> Settings:
-    """Load and validate the main settings file.
+    """Load and validate the main settings file plus its local overrides.
+
+    ``settings.local.yaml`` next to ``path`` (git-ignored) holds the keys that
+    differ per machine (Mac/AVD dev vs Windows/LDPlayer); it is deep-merged
+    over ``path`` before validation, so a typo there is rejected the same way.
 
     Raises:
         ConfigError: if the file is missing, is not valid YAML, or fails
             schema validation (missing key, wrong type, unknown key).
     """
     data = _read_yaml(path)
+    overrides = read_local_overrides(path)
     try:
-        return Settings.model_validate(data)
+        return Settings.model_validate(deep_merge(data, overrides))
     except ValidationError as exc:
-        raise ConfigError(_format_validation_error(path, exc)) from exc
+        source = Path(f"{path} + {local_settings_path(path).name}") if overrides else path
+        raise ConfigError(_format_validation_error(source, exc)) from exc
 
 
 def load_account(path: Path) -> AccountConfig:

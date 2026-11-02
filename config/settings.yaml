@@ -1,6 +1,9 @@
 # =====================================================================
 # Cấu hình chung của VHTK2 Auto Tool
 # Mọi giá trị runtime nằm ở đây — code KHÔNG hardcode.
+# File này = cấu hình PRODUCTION (server Windows/LDPlayer). Khoá khác đi trên
+# máy dev (Mac/AVD) ghi trong config/settings.local.yaml (không commit, gộp đè
+# lên file này) — xem config/settings.local.example.yaml.
 # =====================================================================
 
 ldplayer:
@@ -20,7 +23,7 @@ templates:
   # Thư mục gốc chứa ảnh mẫu
   dir: templates
   # Phiên bản template đang dùng — khi game update thì tạo version mới, trỏ lại đây
-  # (v1.0-avd: chụp trên AVD Mac để dev; v1.0: sẽ chụp trên LDPlayer Windows ở W1)
+  # (v1.0: LDPlayer Windows; v1.0-avd: AVD Mac — đặt trong settings.local.yaml của máy Mac)
   version: v1.0
   # Ngưỡng match template (0..1); dưới ngưỡng coi như không tìm thấy
   match_threshold: 0.85
@@ -227,7 +230,7 @@ login:
 # (`python -m vhtk.worker`), orchestrator chỉ quản lý tiến trình + instance.
 orchestrator:
   # Có điều khiển vòng đời instance LDPlayer qua ldconsole hay không.
-  # Mac dev (AVD chạy sẵn): false. Server Windows: true.
+  # Server Windows: true. Mac dev (AVD chạy sẵn): false trong settings.local.yaml.
   manage_instances: true
   # Index instance MẪU (đã cài game, 960x540/DPI 160) để `ldconsole copy`
   # khi thêm tài khoản mới qua GUI; bỏ trống = không cho provision
