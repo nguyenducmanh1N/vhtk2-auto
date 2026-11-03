@@ -76,7 +76,10 @@ def create_app(
     def default_supervisor() -> WorkerSupervisor:
         settings = load_settings(settings_path)
         ld = (
-            LDPlayerManager(settings.ldplayer.ldconsole_path)
+            LDPlayerManager(
+                settings.ldplayer.ldconsole_path,
+                copy_timeout_s=settings.orchestrator.clone_timeout,
+            )
             if settings.orchestrator.manage_instances
             else None
         )

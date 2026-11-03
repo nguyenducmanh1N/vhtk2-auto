@@ -443,6 +443,10 @@ thread/process.
   (`orchestrator.clone_headroom_gb`, mặc định 5) hoặc đã có máy trùng tên. Server
   bắt mọi `VhtkError` → 502 JSON có nội dung lỗi; GUI hiện mã HTTP khi phản hồi
   không phải JSON. Đã dọn máy thừa, gán `002` → máy #4.
+- **`ldconsole copy` có giới hạn thời gian riêng** (`orchestrator.clone_timeout`,
+  mặc định 600s; thêm 2026-11-02): trước đó copy dùng chung giới hạn 60s của mọi
+  lệnh ldconsole — máy mẫu lớn dần/ổ chậm vượt 60s là tool dừng lệnh giữa chừng,
+  để lại máy copy dở. Các lệnh khác giữ 60s.
 
 ### Cấu hình riêng từng máy — `settings.local.yaml` (2026-11-02)
 

@@ -240,6 +240,10 @@ orchestrator:
   # bỏ dấu # để đổi — CHỈ sau khi đã khởi động lại GUI chạy code mới (GUI cũ
   # không biết khoá này và sẽ báo lỗi config)
   # clone_headroom_gb: 5
+  # Giới hạn thời gian copy máy mẫu (giây). Đo 01/11: ~15–30s cho 9GB; mặc định
+  # 600 để dư cho máy mẫu lớn dần / ổ chậm. Quá hạn -> tool dừng lệnh copy giữa
+  # chừng và báo các máy copy dở cần xoá. Bỏ dấu # để đổi (sau khi restart GUI)
+  # clone_timeout: 600
   # Số instance chạy đồng thời tối đa (farm + main on-demand)
   max_concurrent_instances: 5
   # Chờ Android boot xong sau `ldconsole launch` (giây)
