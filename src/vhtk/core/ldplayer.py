@@ -97,6 +97,9 @@ class LDPlayerManager:
         vms_dir: folder holding the instances' disks (``leidian<i>``);
             defaults to ``vms`` next to ``ldconsole.exe``.
         free_bytes: free space of the disk holding a path (tests).
+        copy_timeout_s: time limit of ``ldconsole copy``, which copies the
+            whole template disk (~9GB) before returning — far longer than
+            the other commands.
     """
 
     COMMAND_TIMEOUT_S = 60.0
@@ -109,12 +112,14 @@ class LDPlayerManager:
         adb_serials: SerialLister | None = None,
         vms_dir: Path | None = None,
         free_bytes: FreeSpace | None = None,
+        copy_timeout_s: float = 600.0,
     ) -> None:
         self._path = Path(ldconsole_path)
         self._runner = runner or self._run
         self._adb_serials = adb_serials or _list_adb_serials
         self._vms_dir = vms_dir or self._path.parent / "vms"
         self._free_bytes = free_bytes or (lambda path: shutil.disk_usage(path).free)
+        self._copy_timeout_s = copy_timeout_s
 
     # -- queries ---------------------------------------------------------------
 
@@ -270,8 +275,9 @@ class LDPlayerManager:
                 )
             except FileNotFoundError as exc:
                 raise LDConsoleError(f"ldconsole not found at {self._path}") from exc
+            timeout = self._copy_timeout_s if args[0] == "copy" else self.COMMAND_TIMEOUT_S
             try:
-                returncode = proc.wait(timeout=self.COMMAND_TIMEOUT_S)
+                returncode = proc.wait(timeout=timeout)
             except subprocess.TimeoutExpired as exc:
                 proc.kill()
                 proc.wait()

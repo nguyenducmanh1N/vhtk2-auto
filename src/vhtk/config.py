@@ -279,6 +279,9 @@ class OrchestratorSettings(_StrictModel):
     # Dung lượng ổ đĩa (GB) phải còn trống SAU khi clone; không đủ thì từ chối
     # provision — ổ đầy làm hỏng đĩa ảo của các máy đang chạy
     clone_headroom_gb: float = Field(ge=0, default=5.0)
+    # Giới hạn thời gian `ldconsole copy` (giây): lệnh copy cả đĩa máy mẫu xong
+    # mới trả về; quá hạn thì tool dừng lệnh -> để lại máy copy dở
+    clone_timeout: float = Field(gt=0, default=600.0)
     # Số instance chạy đồng thời tối đa (farm + main); mở main khi kín slot
     # thì scheduler yêu cầu tạm dừng 1 worker farm trước
     max_concurrent_instances: int = Field(gt=0, default=5)

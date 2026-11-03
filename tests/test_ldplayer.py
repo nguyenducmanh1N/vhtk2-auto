@@ -5,9 +5,11 @@ from __future__ import annotations
 import contextlib
 import os
 import signal
+import subprocess
 import sys
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -311,6 +313,16 @@ def test_run_raises_on_timeout() -> None:
     mgr.COMMAND_TIMEOUT_S = 1.0
     with pytest.raises(LDConsoleError, match="timed out"):
         mgr._run(["-c", "import time; time.sleep(30)"])
+
+
+def test_copy_gets_its_own_longer_timeout() -> None:
+    # copy chép cả đĩa máy mẫu -> không được dính giới hạn 60s của lệnh thường
+    mgr = LDPlayerManager(sys.executable, copy_timeout_s=30.0)
+    mgr.COMMAND_TIMEOUT_S = 1.0
+    with patch.object(subprocess.Popen, "wait", autospec=True, return_value=0) as wait:
+        mgr._run(["copy", "--name", "x", "--from", "0"])
+        mgr._run(["list2"])
+    assert [c.kwargs["timeout"] for c in wait.call_args_list] == [30.0, 1.0]
 
 
 def test_run_raises_with_output_on_nonzero_exit() -> None:
