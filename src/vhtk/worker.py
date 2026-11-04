@@ -43,8 +43,10 @@ from vhtk.core.vision import TemplateStore, Vision
 from vhtk.logging_setup import setup_logging
 from vhtk.notify import NullNotifier
 from vhtk.registry import WorkerRegistry
-from vhtk.tasks.farm import FarmSignal, FarmTask
+from vhtk.tasks.farm import FarmSignal, FarmTask, transfer_request_file
+from vhtk.tasks.gold_transfer import TransferFarmTask, TransferMainTask
 from vhtk.tasks.login import LoginTask
+from vhtk.tasks.money import reached_threshold
 from vhtk.tasks.retreat import RetreatTask
 from vhtk.tasks.sell import SellTask
 
@@ -70,6 +72,8 @@ class WorkerTasks:
     retreat: TaskFactory = RetreatTask
     sell: Callable[[TaskContext], SellTask] = SellTask
     login: TaskFactory = LoginTask
+    transfer_farm: Callable[[TaskContext], TransferFarmTask] = TransferFarmTask
+    transfer_main: Callable[[TaskContext], TransferMainTask] = TransferMainTask
 
 
 class StatusWriter:
@@ -144,12 +148,8 @@ class AccountWorker:
                 return rc
             signal = farm.signal
             self.status.update(signal=signal.value if signal else "")
-            if signal is FarmSignal.GOLD_THRESHOLD:
-                # W3 mới giao dịch — giờ chỉ ghi cờ cho orchestrator + báo người
-                self.status.update(gold_request=True)
-                self.ctx.notifier.send_text(
-                    f"[{self.stem}] gold threshold reached — waiting for W3 transfer"
-                )
+            if signal is FarmSignal.TRANSFER and (rc := self._run_transfer()) is not None:
+                return rc
             if signal in (FarmSignal.HP_LOW, FarmSignal.BAG_FULL):
                 if signal is FarmSignal.BAG_FULL:
                     bag_full_streak += 1
@@ -187,11 +187,98 @@ class AccountWorker:
                         would_sell=r.would_sell,
                     )
                     # bán lỗi không chặn vòng farm — thử lại ở chu kỳ sau
+                    self._note_money(r.money)
             else:
                 bag_full_streak = 0
             if self.max_cycles and cycles >= self.max_cycles:
                 self.status.update(status="stopped", reason="max_cycles")
                 return 0
+
+    def _note_money(self, money: Any) -> None:
+        """Record the money read while the bag was open; raise the gold flag."""
+        if self.ctx.account is None:
+            return
+        cfg = self.ctx.settings.transfer
+        threshold = self.ctx.account.farm.gold_transfer_threshold
+        self.status.update(money=money.as_dict())
+        if reached_threshold(money, cfg.currency, threshold):
+            log.info(
+                "gold threshold reached",
+                stem=self.stem,
+                currency=cfg.currency,
+                balance=money.get(cfg.currency),
+                threshold=threshold,
+            )
+            self.status.update(gold_request=True)
+            self.ctx.notifier.send_text(
+                f"[{self.stem}] gold threshold reached: {money.get(cfg.currency)} "
+                f"{cfg.currency} >= {threshold}"
+            )
+
+    def _run_transfer(self) -> int | None:
+        """Farm side of one trade session; never fatal except kill-switch.
+
+        Thất bại (main không tới, OCR lệch...) chỉ log + báo người, worker
+        quay lại farm; orchestrator quyết định thử lại sau. File yêu cầu bị
+        xoá dù kết quả ra sao để MONITOR không thấy lại lệnh cũ.
+        """
+        request = transfer_request_file(self.ctx.settings.orchestrator.workers_dir, self.stem)
+        try:
+            task = self.tasks.transfer_farm(self.ctx)
+            result = self._run_with_relogin(task)
+            if result.status is TaskStatus.KILLED:
+                self.status.update(status="killed", task="transfer_farm")
+                return 0
+            rep = task.report
+            log.info(
+                "transfer finished",
+                stem=self.stem,
+                status=result.status.value,
+                amount=rep.amount,
+                verified=rep.verified,
+                would_transfer=rep.would_transfer,
+            )
+            self.status.update(
+                transfer={
+                    "status": result.status.value,
+                    "amount": rep.amount,
+                    "verified": rep.verified,
+                    "would_transfer": rep.would_transfer,
+                },
+                # chuyển xong (đã xác minh) thì hạ cờ; còn lại giữ cờ cho lần sau
+                gold_request=not rep.verified,
+            )
+            if not rep.verified and not rep.would_transfer:
+                self.ctx.notifier.send_text(
+                    f"[{self.stem}] transfer failed ({result.status.value}: {result.reason})"
+                )
+            return None
+        finally:
+            request.unlink(missing_ok=True)
+
+    def run_main(self) -> int:
+        """Main-account lifecycle: log in, receive ONE trade, finish."""
+        self.status.update(status="running", task="", state="", signal="", cycle=1)
+        login = self.tasks.login(self.ctx).run()
+        if (rc := self._ended(login, "login")) is not None:
+            return rc
+        task = self.tasks.transfer_main(self.ctx)
+        result = self._run_with_relogin(task)
+        if result.status is TaskStatus.KILLED:
+            self.status.update(status="killed", task="transfer_main")
+            return 0
+        rep = task.report
+        self.status.update(
+            status="done",
+            task="transfer_main",
+            transfer={
+                "status": result.status.value,
+                "amount": rep.amount,
+                "verified": rep.verified,
+            },
+        )
+        log.info("main transfer finished", status=result.status.value, verified=rep.verified)
+        return 0 if result.status is TaskStatus.SUCCESS else 1
 
     def _ended(self, result: TaskResult, task_name: str) -> int | None:
         """Exit code if the loop must stop after this result, else None."""
@@ -262,7 +349,9 @@ def run_worker(settings_path: Path, account_path: Path, max_cycles: int = 0) -> 
     )
     worker = AccountWorker(ctx=ctx, stem=stem, status=status, max_cycles=max_cycles)
     try:
-        return worker.run()
+        assert ctx.account is not None
+        # acc main (role: main) chỉ sống một chuyến giao dịch rồi thoát
+        return worker.run_main() if ctx.account.role == "main" else worker.run()
     except Exception as exc:
         log.error("worker crashed", stem=stem, error=str(exc))
         status.update(status="crashed", reason=str(exc))

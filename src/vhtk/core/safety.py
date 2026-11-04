@@ -75,6 +75,9 @@ class Safety:
         base = kill_switch_path or Path(cfg.kill_switch_file)
         self._kill_switches = kill_switch_files(base, stem)
         self._executed_count = 0
+        # stem của acc worker này — task dùng để tìm file lệnh theo-acc
+        # (vd yêu cầu chuyển vàng); None = công cụ 1 tài khoản
+        self.stem = stem
 
     @property
     def executed_irreversible(self) -> int:

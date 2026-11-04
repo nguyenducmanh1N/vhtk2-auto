@@ -256,6 +256,33 @@ orchestrator:
   # acc đạt ngưỡng đi chung MỘT lần mở main (0 = mở ngay khi có yêu cầu)
   main_batch_window_seconds: 300
 
+# Chuyển vàng về acc main (W3/R4) — giao dịch trực tiếp 2 nhân vật đứng cạnh
+# nhau tại điểm hẹn cố định trong thành. Mọi bước mời/đặt tiền/khoá/xác nhận
+# đi qua guard_irreversible (dry_run dừng trước Xác nhận).
+transfer:
+  # Bật vòng điều phối (chạy nền trong GUI server). false = farm chỉ ghi cờ
+  # gold_request + báo người như trước
+  enabled: false
+  # Loại tiền tính ngưỡng + giao dịch: vang | bac | dong (3 cột dưới túi).
+  # Lúc test ít vàng: đổi sang "bac"
+  currency: vang
+  # File acc main (config/accounts/<main_stem>.yaml, role: main)
+  main_stem: main
+  # Điểm hẹn: map + pixel trên ẢNH bản đồ (chọn như điểm farm; "" / [0, 0] =
+  # chưa cấu hình -> task giao dịch từ chối chạy)
+  rendezvous_map: ''
+  rendezvous_spot: [0, 0]
+  # Chờ bên kia báo "đã tới điểm hẹn" (giây); quá hạn -> huỷ sạch, về farm
+  partner_wait_timeout: 600
+  # Chờ từng bước trong khung giao dịch (giây)
+  trade_step_timeout: 30
+  # Dung sai đối chiếu tiền trước/sau (phí giao dịch / OCR làm tròn)
+  verify_tolerance: 0
+  # Chu kỳ vòng điều phối đọc state file các worker (giây)
+  poll_interval: 10
+  # Chuyến thất bại -> chờ bao lâu mới thử lại acc đó (giây)
+  retry_delay_seconds: 900
+
 telegram:
   # Bật/tắt thông báo Telegram
   enabled: false

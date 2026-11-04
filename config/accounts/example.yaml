@@ -45,4 +45,7 @@ farm:
   retreat_map: ''
   retreat_spot: [0, 0]
   # Ngưỡng vàng: vượt ngưỡng thì kích hoạt chuyển vàng về acc main
+  # (đơn vị = transfer.currency trong settings.yaml; đọc OCR lúc mở túi bán đồ)
   gold_transfer_threshold: 1000000
+  # Số tiền giữ lại trên acc farm sau mỗi lần chuyển (mua thuốc, sửa đồ)
+  gold_keep: 0

@@ -8,7 +8,7 @@ with a human-readable message pointing at the exact key and problem.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -296,6 +296,40 @@ class OrchestratorSettings(_StrictModel):
     main_batch_window_seconds: float = Field(ge=0, default=300.0)
 
 
+Currency = Literal["vang", "bac", "dong"]
+
+
+class TransferSettings(_StrictModel):
+    """Gold transfer to the main account (W3/R4): rendezvous + trade knobs.
+
+    Giao dịch trực tiếp giữa 2 nhân vật đứng cạnh nhau tại ĐIỂM HẸN cố định
+    trong thành. Acc farm tới trước chờ, acc main (on-demand) tới sau, hai
+    bên đồng bộ qua file hàng rào trong ``orchestrator.workers_dir``.
+    """
+
+    # Bật vòng điều phối chuyển vàng (GUI server chạy nền); false = farm chỉ
+    # ghi cờ gold_request + báo người như trước
+    enabled: bool = False
+    # Loại tiền dùng làm "vàng" của ngưỡng/giao dịch: vang | bac | dong
+    # (3 cột dưới túi). Test lúc ít vàng: đổi sang "bac"
+    currency: Currency = "vang"
+    # Tên file acc main (không đuôi .yaml) trong paths.accounts_dir
+    main_stem: str = "main"
+    # Điểm hẹn: map + pixel trên ảnh bản đồ (cùng hệ quy chiếu farm.spot)
+    rendezvous_map: str = ""
+    rendezvous_spot: tuple[int, int] = (0, 0)
+    # Chờ bên kia báo "đã tới điểm hẹn" (giây) — quá hạn thì huỷ sạch về farm
+    partner_wait_timeout: float = Field(gt=0, default=600.0)
+    # Chờ từng bước trong khung giao dịch (mời/chấp nhận/khoá/xác nhận)
+    trade_step_timeout: float = Field(gt=0, default=30.0)
+    # Dung sai khi đối chiếu tiền trước/sau giao dịch (phí/làm tròn OCR)
+    verify_tolerance: int = Field(ge=0, default=0)
+    # Chu kỳ vòng điều phối đọc state file các worker (giây)
+    poll_interval: float = Field(gt=0, default=10.0)
+    # Sau một chuyến thất bại, chờ bao lâu mới thử lại acc đó (giây)
+    retry_delay_seconds: float = Field(ge=0, default=900.0)
+
+
 class TelegramSettings(_StrictModel):
     enabled: bool
     bot_token: str = ""
@@ -327,6 +361,7 @@ class Settings(_StrictModel):
     login: LoginSettings
     # Mặc định đầy đủ để settings.yaml cũ (chưa có mục này) vẫn load được
     orchestrator: OrchestratorSettings = OrchestratorSettings()
+    transfer: TransferSettings = TransferSettings()
     telegram: TelegramSettings
     logging: LoggingSettings
     paths: PathSettings
@@ -365,6 +400,8 @@ class AccountFarm(_StrictModel):
     retreat_map: str = ""
     retreat_spot: tuple[int, int] = (0, 0)
     gold_transfer_threshold: int = Field(ge=0)
+    # Số tiền GIỮ LẠI trên acc farm sau mỗi lần chuyển (mua thuốc, sửa đồ)
+    gold_keep: int = Field(ge=0, default=0)
 
     @model_validator(mode="after")
     def _resume_above_retreat(self) -> AccountFarm:
@@ -461,8 +498,50 @@ class SellCoordinates(_StrictModel):
     bag_grid: BagGrid
     # Vùng hiển thị tiền (vàng/bạc/đồng) dưới túi — so trước/sau khi bán
     money_rect: tuple[int, int, int, int]
+    # Ô SỐ của từng loại tiền trên dòng đó (OCR đọc số) — None = chưa đo,
+    # tool không đọc được tiền (không phát tín hiệu chuyển vàng)
+    money_cells: MoneyCells | None = None
     # Nút chuyển trang túi (1, 2, 3) bên phải lưới
     page_buttons: list[tuple[int, int]]
+
+
+class MoneyCells(_StrictModel):
+    """OCR rectangles (x, y, w, h) of the three money figures under the bag."""
+
+    vang: tuple[int, int, int, int]
+    bac: tuple[int, int, int, int]
+    dong: tuple[int, int, int, int]
+
+    def rect(self, currency: Currency) -> tuple[int, int, int, int]:
+        """Rectangle of one currency's figure."""
+        return cast(tuple[int, int, int, int], getattr(self, currency))
+
+
+class TradeCoordinates(_StrictModel):
+    """Fixed geometry of the trade window (chụp/đo khi có 2 acc trên LDPlayer).
+
+    Mọi rect (0, 0, 0, 0) / điểm (0, 0) = CHƯA ĐO — task giao dịch từ chối
+    chạy thay vì tap mù.
+    """
+
+    # Ô nhập số tiền trong khung giao dịch (tap để gõ số)
+    money_input: tuple[int, int] = (0, 0)
+    # Ô số tiền MÌNH đã đặt / bên kia đã đặt trong khung giao dịch (OCR)
+    own_offer_rect: tuple[int, int, int, int] = (0, 0, 0, 0)
+    partner_offer_rect: tuple[int, int, int, int] = (0, 0, 0, 0)
+    # Điểm tap lên nhân vật bên kia khi 2 bên đứng đúng điểm hẹn (mở menu)
+    partner_tap: tuple[int, int] = (0, 0)
+
+    def unmeasured(self) -> list[str]:
+        """Names of fields still at their placeholder value."""
+        out: list[str] = []
+        for name in ("money_input", "partner_tap"):
+            if getattr(self, name) == (0, 0):
+                out.append(name)
+        for name in ("own_offer_rect", "partner_offer_rect"):
+            if getattr(self, name) == (0, 0, 0, 0):
+                out.append(name)
+        return out
 
 
 class Coordinates(_StrictModel):
@@ -474,6 +553,7 @@ class Coordinates(_StrictModel):
     login: LoginCoordinates
     farm: FarmCoordinates
     sell: SellCoordinates
+    trade: TradeCoordinates = TradeCoordinates()
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:

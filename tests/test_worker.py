@@ -7,9 +7,10 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-from vhtk.config import load_settings
+from vhtk.config import AccountConfig, load_settings
 from vhtk.core.fsm import TaskContext, TaskResult, TaskStatus
 from vhtk.tasks.farm import FarmSignal
+from vhtk.tasks.money import Money
 from vhtk.worker import AccountWorker, StatusWriter, WorkerTasks, state_file
 
 SETTINGS_PATH = Path(__file__).parent.parent / "config" / "settings.yaml"
@@ -48,6 +49,7 @@ class FakeSell(FakeTask):
         would_sell = 0
         skipped_unknown = 0
         skipped_quality = 0
+        money = Money()
 
     report = _Report()
 
@@ -152,16 +154,151 @@ def test_bag_full_always_sells_and_loop_guard_stops(tmp_path: Path) -> None:
     assert any("bag still full" in t for t in notifier.texts)
 
 
+def make_account(threshold: int, keep: int = 0) -> AccountConfig:
+    return AccountConfig.model_validate(
+        {
+            "name": "dev",
+            "role": "farm",
+            "ldplayer": {"index": 0, "adb_serial": "emulator-5554"},
+            "login": {"server": "S9", "username": "", "password": ""},
+            "farm": {
+                "map": "Bắc Tuyền Châu",
+                "gold_transfer_threshold": threshold,
+                "gold_keep": keep,
+            },
+        }
+    )
+
+
 def test_gold_threshold_flags_state_and_notifies(tmp_path: Path) -> None:
+    """Tiền đọc lúc bán (BAG_FULL -> sell) đạt ngưỡng -> cờ gold_request + báo người."""
     worker, notifier, sf = make_worker(
         tmp_path,
         farm_results=[ok()],
-        farm_signals=[FarmSignal.GOLD_THRESHOLD],
+        farm_signals=[FarmSignal.BAG_FULL],
+        retreat_results=[ok()],
+        sell_results=[ok()],
         max_cycles=1,
     )
-    assert worker.run() == 0
-    assert read_state(sf)["gold_request"] is True
+    worker.ctx.account = make_account(threshold=500)
+    worker.ctx.settings = worker.ctx.settings.model_copy(
+        update={"transfer": worker.ctx.settings.transfer.model_copy(update={"currency": "bac"})}
+    )
+    FakeSell.report.money = Money(vang=0, bac=750, dong=3)
+    try:
+        assert worker.run() == 0
+    finally:
+        FakeSell.report.money = Money()
+    st = read_state(sf)
+    assert st["gold_request"] is True
+    assert st["money"] == {"vang": 0, "bac": 750, "dong": 3}
     assert any("gold threshold" in t for t in notifier.texts)
+
+
+def test_gold_threshold_ignores_unreadable_money(tmp_path: Path) -> None:
+    worker, notifier, sf = make_worker(
+        tmp_path,
+        farm_results=[ok()],
+        farm_signals=[FarmSignal.BAG_FULL],
+        retreat_results=[ok()],
+        sell_results=[ok()],
+        max_cycles=1,
+    )
+    worker.ctx.account = make_account(threshold=1)
+    FakeSell.report.money = Money()  # OCR không đọc được -> không bao giờ coi là đạt ngưỡng
+    assert worker.run() == 0
+    assert "gold_request" not in read_state(sf)
+    assert not any("gold threshold" in t for t in notifier.texts)
+
+
+class FakeTransfer(FakeTask):
+    class _Report:
+        amount = 0
+        verified = False
+        would_transfer = False
+
+    def __init__(self, results: Iterator[TaskResult], verified: bool) -> None:
+        super().__init__(results)
+        self.report = self._Report()
+        self.report.verified = verified
+        self.report.amount = 1000
+
+
+def test_transfer_signal_runs_farm_side_and_clears_request(tmp_path: Path) -> None:
+    worker, _, sf = make_worker(
+        tmp_path,
+        farm_results=[ok(), ok()],
+        farm_signals=[FarmSignal.TRANSFER, None],
+        max_cycles=2,
+    )
+    worker.ctx.account = make_account(threshold=1)
+    workers_dir = tmp_path / "workers"
+    worker.ctx.settings = worker.ctx.settings.model_copy(
+        update={
+            "orchestrator": worker.ctx.settings.orchestrator.model_copy(
+                update={"workers_dir": workers_dir}
+            )
+        }
+    )
+    request = workers_dir / "dev.transfer.json"
+    request.parent.mkdir(parents=True, exist_ok=True)
+    request.write_text("{}", encoding="utf-8")
+    worker.tasks = WorkerTasks(
+        farm=worker.tasks.farm,
+        retreat=worker.tasks.retreat,
+        sell=worker.tasks.sell,
+        login=worker.tasks.login,
+        transfer_farm=lambda _ctx: FakeTransfer(iter([ok("VERIFY_AFTER")]), verified=True),
+    )
+    assert worker.run() == 0
+    st = read_state(sf)
+    assert st["transfer"]["verified"] is True
+    assert st["gold_request"] is False  # chuyển xong -> hạ cờ
+    assert not request.exists()  # file yêu cầu bị xoá dù kết quả ra sao
+    assert st["cycle"] == 2  # worker quay lại farm sau giao dịch
+
+
+def test_transfer_failure_keeps_flag_and_continues_farming(tmp_path: Path) -> None:
+    worker, notifier, sf = make_worker(
+        tmp_path,
+        farm_results=[ok(), ok()],
+        farm_signals=[FarmSignal.TRANSFER, None],
+        max_cycles=2,
+    )
+    worker.ctx.account = make_account(threshold=1)
+    worker.tasks = WorkerTasks(
+        farm=worker.tasks.farm,
+        retreat=worker.tasks.retreat,
+        sell=worker.tasks.sell,
+        login=worker.tasks.login,
+        transfer_farm=lambda _ctx: FakeTransfer(
+            iter([result(TaskStatus.ABORTED, "partner timeout")]), verified=False
+        ),
+    )
+    assert worker.run() == 0  # giao dịch hỏng KHÔNG giết worker
+    st = read_state(sf)
+    assert st["gold_request"] is True
+    assert st["cycle"] == 2
+    assert any("transfer failed" in t for t in notifier.texts)
+
+
+def test_main_role_logs_in_receives_once_and_exits(tmp_path: Path) -> None:
+    worker, _, sf = make_worker(
+        tmp_path,
+        farm_results=[],
+        farm_signals=[],
+        login_results=[ok("VERIFY_INGAME")],
+    )
+    worker.tasks = WorkerTasks(
+        farm=worker.tasks.farm,
+        retreat=worker.tasks.retreat,
+        sell=worker.tasks.sell,
+        login=worker.tasks.login,
+        transfer_main=lambda _ctx: FakeTransfer(iter([ok("VERIFY_AFTER")]), verified=True),
+    )
+    assert worker.run_main() == 0
+    st = read_state(sf)
+    assert st["status"] == "done" and st["transfer"]["verified"] is True
 
 
 def test_relogin_runs_login_then_retries(tmp_path: Path) -> None:

@@ -69,8 +69,25 @@ sell:
     rows: 6
   # Vùng hiển thị tiền (vàng/bạc/đồng) dưới túi — so trước/sau khi bán
   money_rect: [620, 426, 210, 22]
+  # Ô SỐ từng loại tiền trên dòng đó (OCR) — đo trên ảnh AVD 2026-11-03:
+  # icon vàng x≈638-662, bạc ≈710-735, đồng ≈785-805; số nằm ngay bên phải icon
+  money_cells:
+    vang: [663, 428, 44, 20]
+    bac: [735, 428, 46, 20]
+    dong: [805, 428, 44, 20]
   # Nút chuyển trang túi (trang 1/2/3) bên phải lưới
   page_buttons:
     - [823, 157]
     - [823, 270]
     - [823, 375]
+
+trade:
+  # Khung giao dịch — CHƯA ĐO (cần 2 acc trên LDPlayer). Giá trị 0 = chưa đo,
+  # task giao dịch từ chối chạy. Đo bằng tools/capture.py khi có ảnh thật.
+  # Ô nhập số tiền trong khung giao dịch
+  money_input: [0, 0]
+  # Ô số tiền MÌNH đã đặt / BÊN KIA đã đặt (x, y, w, h) — OCR đối chiếu
+  own_offer_rect: [0, 0, 0, 0]
+  partner_offer_rect: [0, 0, 0, 0]
+  # Điểm tap lên nhân vật bên kia khi cả 2 đứng đúng điểm hẹn (mở menu)
+  partner_tap: [0, 0]

@@ -38,6 +38,7 @@ from vhtk.core.errors import StateTimeout, TaskDefinitionError
 from vhtk.core.fsm import ABORT, DONE, BaseTask, State, TaskContext
 from vhtk.core.vision import Image, detect_quality
 from vhtk.tasks.farm import TPL_HUD
+from vhtk.tasks.money import Money, MoneyReader
 from vhtk.tasks.navigate import (
     TPL_BTN_CONFIRM_COORDS,
     TPL_BTN_SIT,
@@ -74,6 +75,9 @@ class SellReport:
     skipped_unknown: int = 0  # không khớp whitelist -> giữ lại
     skipped_quality: int = 0  # phẩm chất >= ngưỡng -> giữ lại
     details: list[str] = field(default_factory=list)
+    # tiền đọc được lúc túi đang mở (SAU khi bán) — worker dùng cho ngưỡng
+    # chuyển vàng; None từng ô = không đọc được
+    money: Money = field(default_factory=Money)
 
 
 def cell_highlight_fraction(cell: Image, cfg: SellSettings) -> float:
@@ -126,6 +130,7 @@ class SellTask(BaseTask):
         coords: Coordinates = load_coordinates(ctx.settings.paths.coordinates_file)
         self._nav = Navigator(ctx, coords.farm, ctx.settings.farm)
         self._sc = coords.sell
+        self._money = MoneyReader(coords.sell.money_cells, None, ctx.settings.ocr.lang)
         self.report = SellReport()
         super().__init__(ctx)
 
@@ -227,12 +232,16 @@ class SellTask(BaseTask):
                 time.sleep(1.0)
             self._scan_page(page, whitelist)
         self._verify_money_changed(money_before)
+        # túi đang mở sẵn — đọc tiền cho ngưỡng chuyển vàng (W3), không tốn thao tác
+        if self._money.available:
+            self.report.money = self._money.read(self.ctx.vision.capture_screen())
         log.info(
             "sell pass done",
             sold=self.report.sold,
             would_sell=self.report.would_sell,
             kept_unknown=self.report.skipped_unknown,
             kept_quality=self.report.skipped_quality,
+            money=self.report.money.as_dict(),
         )
         return S_CLOSE
 

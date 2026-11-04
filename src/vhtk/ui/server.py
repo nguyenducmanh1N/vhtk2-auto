@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import re
 import subprocess
+import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -41,7 +43,7 @@ from vhtk.core.errors import VhtkError
 from vhtk.core.ldplayer import LDPlayerManager
 from vhtk.mapstore import MapStore
 from vhtk.mapstore import maps_dir as store_maps_dir
-from vhtk.orchestrator import OrchestratorError, WorkerSupervisor
+from vhtk.orchestrator import OrchestratorError, TransferCoordinator, WorkerSupervisor
 from vhtk.tasks.navigate import map_slug
 
 log = structlog.get_logger(__name__)
@@ -62,6 +64,7 @@ def _validation_detail(exc: ValidationError) -> list[dict[str, str]]:
 def create_app(
     settings_path: Path = Path("config/settings.yaml"),
     supervisor_factory: Callable[[], WorkerSupervisor] | None = None,
+    start_coordinator: bool = True,
 ) -> FastAPI:
     """Build the FastAPI app bound to one settings file.
 
@@ -70,6 +73,8 @@ def create_app(
         supervisor_factory: WorkerSupervisor builder override (tests); the
             default builds one per request from the CURRENT settings, with an
             LDPlayerManager only when ``orchestrator.manage_instances`` is on.
+        start_coordinator: run the W3 transfer coordinator thread when
+            ``transfer.enabled`` is on (tests pass False).
     """
     app = FastAPI(title="VHTK2 Auto Tool — Quản lý", docs_url=None, redoc_url=None)
 
@@ -441,4 +446,48 @@ def create_app(
         )
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+    # -- W3: vòng điều phối chuyển vàng (chạy nền trong tiến trình server) -------
+    coordinator: TransferCoordinator | None = None
+
+    @app.get("/api/transfer")
+    def transfer_status() -> dict[str, Any]:
+        settings = load_settings(settings_path)
+        sess = coordinator.session if coordinator else None
+        return {
+            "enabled": settings.transfer.enabled,
+            "currency": settings.transfer.currency,
+            "main_stem": settings.transfer.main_stem,
+            "pending": sorted(coordinator.scheduler.pending) if coordinator else [],
+            "session": (
+                {"farm": sess.farm_stem, "paused": sess.paused} if sess is not None else None
+            ),
+        }
+
+    if start_coordinator:
+        try:
+            boot = load_settings(settings_path)
+        except ConfigError as exc:
+            log.error("transfer coordinator not started: config error", detail=str(exc))
+            boot = None
+        if boot is not None and boot.transfer.enabled:
+            coordinator = TransferCoordinator(boot, make_supervisor())
+
+            def _loop(coord: TransferCoordinator, interval: float) -> None:
+                while True:
+                    try:
+                        actions = coord.tick()
+                        if actions:
+                            log.info("transfer coordinator", actions=actions)
+                    except Exception as exc:  # vòng nền không bao giờ được chết im lặng
+                        log.error("transfer coordinator crashed tick", error=str(exc))
+                    time.sleep(interval)
+
+            threading.Thread(
+                target=_loop,
+                args=(coordinator, boot.transfer.poll_interval),
+                name="transfer-coordinator",
+                daemon=True,
+            ).start()
+            log.info("transfer coordinator started", interval=boot.transfer.poll_interval)
     return app

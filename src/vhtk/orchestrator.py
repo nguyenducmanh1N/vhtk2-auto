@@ -400,3 +400,201 @@ class MainScheduler:
             actions.append(Action(kind="pause_farm", stem=idle[0]))
         actions.append(Action(kind="start_main", stem=self._main_stem))
         return actions
+
+
+# ---------------------------------------------------------------------------
+# W3: transfer coordinator — runs the MainScheduler's decisions for real
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TransferSession:
+    """One live trade: which farm, when it started, which farms were paused."""
+
+    farm_stem: str
+    started_at: float
+    paused: list[str]
+
+
+class TransferCoordinator:
+    """Poll worker state files, open the main on demand, run ONE trade at a time.
+
+    Vòng lặp (GUI server gọi ``tick()`` mỗi ``transfer.poll_interval`` giây):
+
+    1. Không có chuyến đang chạy: gom cờ ``gold_request`` từ state file các
+       farm ĐANG CHẠY -> ``MainScheduler.plan`` -> thực thi: tạm dừng farm
+       thừa slot, ghi file hàng rào + file yêu cầu ``<farm>.transfer.json``
+       cho đúng 1 farm, mở worker main (role main: login -> nhận giao dịch
+       -> thoát).
+    2. Có chuyến: theo dõi hàng rào/worker main; cả hai bên xong (done/failed)
+       hoặc main đã thoát hoặc quá hạn -> dọn: xoá file yêu cầu, dừng main
+       (tắt instance), mở lại farm đã tạm dừng, ghi thời điểm thử lại.
+
+    Mỗi chuyến phục vụ MỘT farm (giao dịch tay đôi); các farm còn lại trong
+    hàng đợi đi chuyến sau. Mọi hiệu ứng ngoài đi qua ``WorkerSupervisor``.
+    """
+
+    def __init__(
+        self,
+        settings: Settings,
+        supervisor: WorkerSupervisor,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._settings = settings
+        self._cfg = settings.transfer
+        self._sup = supervisor
+        self._clock = clock
+        orch = settings.orchestrator
+        self.scheduler = MainScheduler(
+            orch.max_concurrent_instances, orch.main_batch_window_seconds, self._cfg.main_stem
+        )
+        self.session: TransferSession | None = None
+        # stem -> monotonic time trước đó KHÔNG được xếp chuyến mới (sau thất bại)
+        self._retry_after: dict[str, float] = {}
+
+    # -- state-file helpers -----------------------------------------------------------
+
+    def _workers_dir(self) -> Path:
+        return self._settings.orchestrator.workers_dir
+
+    def _barrier_path(self) -> Path:
+        return self._workers_dir() / "transfer.json"
+
+    def _request_path(self, stem: str) -> Path:
+        return self._workers_dir() / f"{stem}.transfer.json"
+
+    def _farm_stems(self) -> list[str]:
+        folder = self._settings.paths.accounts_dir
+        if not folder.is_dir():
+            return []
+        out: list[str] = []
+        for path in sorted(folder.glob("*.yaml")):
+            if path.stem == "example":
+                continue
+            try:
+                if load_account(path).role == "farm":
+                    out.append(path.stem)
+            except Exception as exc:  # file acc hỏng không được chặn các acc khác
+                log.warning("skipping unreadable account", path=str(path), error=str(exc))
+        return out
+
+    def _gold_requests(self, running: set[str]) -> list[str]:
+        now = self._clock()
+        wanted: list[str] = []
+        for stem in running:
+            if self._retry_after.get(stem, 0.0) > now:
+                continue
+            state = self._sup.worker_status(stem)["state"]
+            if isinstance(state, dict) and state.get("gold_request") is True:
+                wanted.append(stem)
+        return wanted
+
+    # -- main loop ----------------------------------------------------------------------
+
+    def tick(self) -> list[str]:
+        """One scheduling pass; returns human-readable actions taken (for logs/tests)."""
+        if not self._cfg.enabled:
+            return []
+        try:
+            return self._finish_session() if self.session else self._maybe_start()
+        except VhtkError as exc:
+            log.error("transfer coordinator error", error=str(exc))
+            return [f"error: {exc}"]
+
+    def _maybe_start(self) -> list[str]:
+        main = self._cfg.main_stem
+        running = {s for s in self._sup.registry.live_stems() if s != main}
+        running &= set(self._farm_stems())
+        now = self._clock()
+        for stem in self._gold_requests(running):
+            self.scheduler.note_gold_request(stem, now)
+        # yêu cầu của farm đã tắt/không còn cờ thì rút khỏi hàng đợi
+        stale = [s for s in self.scheduler.pending if s not in running]
+        self.scheduler.clear(stale)
+        actions = self.scheduler.plan(now, running, self._sup.registry.alive(main))
+        if not actions:
+            return []
+        done: list[str] = []
+        paused: list[str] = []
+        farm_stem = min(self.scheduler.pending, key=self.scheduler.pending.get)  # type: ignore[arg-type]
+        for action in actions:
+            if action.kind == "pause_farm":
+                self._sup.stop(action.stem)
+                paused.append(action.stem)
+                done.append(f"pause_farm:{action.stem}")
+            elif action.kind == "start_main":
+                self._open_session(farm_stem, paused)
+                done.append(f"start_main:{farm_stem}")
+        return done
+
+    def _open_session(self, farm_stem: str, paused: list[str]) -> None:
+        main = self._cfg.main_stem
+        session_id = f"{farm_stem}-{int(time.time())}"
+        barrier = {
+            "session": session_id,
+            "farm_stem": farm_stem,
+            "main_stem": main,
+            "farm": {},
+            "main": {},
+        }
+        self._write_json(self._barrier_path(), barrier)
+        self._write_json(self._request_path(farm_stem), {"session": session_id})
+        self._sup.start(main)
+        self.scheduler.clear([farm_stem])
+        self.session = TransferSession(farm_stem, self._clock(), paused)
+        log.info("transfer session opened", session=session_id, farm=farm_stem, main=main)
+
+    def _finish_session(self) -> list[str]:
+        assert self.session is not None
+        sess = self.session
+        main = self._cfg.main_stem
+        barrier = self._read_json(self._barrier_path())
+        farm_phase = str((barrier.get("farm") or {}).get("phase", ""))
+        main_phase = str((barrier.get("main") or {}).get("phase", ""))
+        both_over = farm_phase in ("done", "failed") and main_phase in ("done", "failed")
+        main_alive = self._sup.registry.alive(main)
+        timeout = self._cfg.partner_wait_timeout * 2 + self._settings.farm.travel_timeout
+        expired = self._clock() - sess.started_at > timeout
+        if not (both_over or not main_alive or expired):
+            return []
+        verified = (barrier.get("farm") or {}).get("verified") is True
+        log.info(
+            "transfer session closing",
+            farm=sess.farm_stem,
+            farm_phase=farm_phase,
+            main_phase=main_phase,
+            main_alive=main_alive,
+            expired=expired,
+            verified=verified,
+        )
+        done = [f"close:{sess.farm_stem}:{'ok' if verified else 'fail'}"]
+        self._request_path(sess.farm_stem).unlink(missing_ok=True)
+        self._sup.stop(main)
+        done.append(f"stop_main:{main}")
+        for stem in sess.paused:
+            try:
+                self._sup.start(stem)
+                done.append(f"resume_farm:{stem}")
+            except VhtkError as exc:
+                log.error("cannot resume paused farm", stem=stem, error=str(exc))
+        # thành công: đợi lần đọc tiền kế tiếp hạ cờ; thất bại: giãn thử lại
+        self._retry_after[sess.farm_stem] = self._clock() + (
+            self._cfg.retry_delay_seconds if not verified else self._cfg.poll_interval * 2
+        )
+        self.session = None
+        return done
+
+    @staticmethod
+    def _write_json(path: Path, data: dict[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
+
+    @staticmethod
+    def _read_json(path: Path) -> dict[str, Any]:
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return raw if isinstance(raw, dict) else {}

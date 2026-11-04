@@ -16,8 +16,9 @@ Cập nhật lần cuối: 2026-10-25. Kế hoạch chi tiết từng giai đo�
 | 4.3–4.5 | sell, equipment, skill_verify | ⬜ Chưa làm (stub) |
 | D1 | App desktop — quản lý tài khoản & an toàn (`python -m vhtk.ui`): CRUD acc trên YAML giữ comment, tab An toàn có dải trạng thái bảo vệ; FastAPI + web UI, pywebview tuỳ chọn | ✅ Xong, đã verify bằng trình duyệt |
 | 5 | Orchestrator đa instance + notify Telegram | 🔶 W2-prep XONG trên Mac (2026-10-28): worker process + registry + supervisor + scheduler + API/GUI; còn nghiệm thu thật trên Windows (W1→W2). Notify Telegram thật chưa làm |
+| W3 | R4 chuyển vàng về main (giao dịch trực tiếp) | 🔶 Code + test xong trên Mac (2026-11-04): đọc tiền OCR, cờ ngưỡng, 2 FSM giao dịch, hàng rào file, coordinator mở main on-demand. **Chặn bởi UI contract**: chưa có ảnh khung giao dịch (template `trade/`, toạ độ `coordinates.trade`, template `common/btn_bag`) |
 
-Kiểm tra hiện tại: **267 test pass**, `ruff check` sạch, `mypy --strict` sạch (31 file).
+Kiểm tra hiện tại: **308 test pass**, `ruff check` sạch, `mypy --strict` sạch (32 file).
 
 ## Giai đoạn 0 — Bộ khung
 
@@ -461,7 +462,55 @@ thread/process.
   (ghi vào settings.yaml sẽ bị đè — trông như lưu không ăn), còn lại vào settings.yaml.
 - PHẢI restart GUI/worker sau khi pull (code cũ không biết file local).
 
-## Test (281 test, không cần thiết bị)
+## W3 — Chuyển vàng về main (code xong trên Mac, 2026-11-04; chờ UI thật)
+
+Thiết kế chốt: giao dịch tay đôi tại điểm hẹn cố định; **một chuyến = một farm
++ main on-demand**; hai bên đồng bộ qua file hàng rào `logs/workers/transfer.json`.
+
+- **Đọc tiền (`tasks/money.py`):** OCR 3 ô vàng/bạc/đồng trên dòng tiền dưới
+  túi (`sell.money_cells` trong coordinates.yaml, đo trên ảnh AVD 03/11). Đọc
+  lúc túi ĐANG MỞ trong SellTask (không tốn thao tác) → `SellReport.money` →
+  worker ghi `money` vào state file; đạt `gold_transfer_threshold` (đơn vị =
+  `transfer.currency`, đổi sang `bac` để test ít vàng) → cờ `gold_request` + báo
+  người. Không đọc được (thiếu paddleocr / ô chưa đo) = "không biết", KHÔNG
+  bao giờ coi là 0 hay đạt ngưỡng.
+- **Tín hiệu `FarmSignal.TRANSFER`:** MONITOR poll file
+  `logs/workers/<stem>.transfer.json` (coordinator ghi) → tắt auto → worker chạy
+  `TransferFarmTask`; xong (kể cả thất bại) xoá file yêu cầu, quay lại farm;
+  xác minh thành công mới hạ cờ `gold_request`. Giao dịch hỏng KHÔNG giết worker.
+- **`tasks/gold_transfer.py`:** `TransferFarmTask` (VERIFY_HUD → GO_RENDEZVOUS →
+  WAIT_PARTNER → INVITE → PUT_MONEY → LOCK → CONFIRM → VERIFY_AFTER) và
+  `TransferMainTask` (… → ACCEPT → LOCK → CONFIRM → VERIFY_AFTER); nhánh CANCEL
+  dọn khung giao dịch. Đi tới điểm hẹn tái dùng `Navigator` + kho map như
+  Retreat. Số chuyển = tiền − `gold_keep` (acc). `CONFIRM` qua
+  `guard_irreversible` (dry_run dừng TRƯỚC Xác nhận). Thành công chỉ khi OCR
+  thấy tiền đổi đúng số ở CẢ HAI phía (`transfer_verified`, dung sai cấu hình).
+  **VERIFY_HUD từ chối chạy** khi thiếu template `trade/`, toạ độ
+  `coordinates.trade` chưa đo, OCR không sẵn, hoặc hàng rào không ghi tên acc này.
+- **Worker role `main`:** `python -m vhtk.worker --account main.yaml` → login →
+  nhận MỘT giao dịch → thoát (`status: done`) — đúng quyết định main không chạy
+  thường trực.
+- **`TransferCoordinator` (orchestrator.py):** vòng nền trong GUI server khi
+  `transfer.enabled: true` (`/api/transfer` xem trạng thái). Mỗi tick: gom cờ
+  từ farm ĐANG CHẠY → `MainScheduler.plan` → tạm dừng farm thừa slot → ghi
+  hàng rào + file yêu cầu → `supervisor.start(main)`. Chuyến kết thúc khi 2 bên
+  done/failed, main thoát, hoặc quá hạn → xoá yêu cầu, dừng main (tắt
+  instance), mở lại farm đã dừng, giãn thử lại `retry_delay_seconds` nếu hỏng.
+- **Config mới:** `settings.yaml` mục `transfer:`; `coordinates.yaml`
+  `sell.money_cells` + `trade:` (toàn 0 = chưa đo); acc `farm.gold_keep`.
+- **Test mới (27):** money/pure (8), gold_transfer (4: hàng rào, đồ thị 2 FSM
+  validate, từ chối chạy khi thiếu UI contract/sai acc), worker (5: ngưỡng tiền,
+  bỏ qua tiền không đọc được, TRANSFER thành công/thất bại, role main),
+  coordinator (5: tắt, mở chuyến, đóng + giãn, nhường slot + mở lại, main chết).
+- **Còn thiếu để chạy thật (cần 2 acc trên LDPlayer):** chụp từng bước giao
+  dịch → template `trade/menu_giao_dich`, `btn_dong_y`, `window_header`,
+  `btn_khoa`, `locked_mark`, `partner_locked_mark`, `btn_xac_nhan`, `btn_huy`,
+  `success_notice` + `common/btn_bag`; đo `coordinates.trade.*`; cài paddleocr;
+  đối chiếu flow thật với flow giả định (tap nhân vật → menu "Giao dịch";
+  đặt tiền → Khoá → Xác nhận) rồi sửa FSM nếu lệch. Tra cứu web 04/11 không
+  có hướng dẫn giao dịch cho bản 3C.
+
+## Test (308 test, không cần thiết bị)
 
 - `tests/test_config.py` — load/validate settings, thông báo lỗi thiếu key/sai kiểu.
 - `tests/test_vision.py` (37) — NMS, parse số/phân số OCR, preprocess auto-invert, detect_quality với ảnh tổng hợp, TemplateStore/find/ROI/wait trên screenshot giả.

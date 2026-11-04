@@ -399,3 +399,141 @@ def test_scheduler_request_idempotent() -> None:
     s.note_gold_request("farm01", now=0.0)
     s.note_gold_request("farm01", now=50.0)  # không reset mốc đầu
     assert s.pending["farm01"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# W3: TransferCoordinator — chạy quyết định của scheduler trên supervisor giả
+# ---------------------------------------------------------------------------
+
+import json  # noqa: E402
+
+from vhtk.orchestrator import TransferCoordinator  # noqa: E402
+from vhtk.worker import state_file  # noqa: E402
+
+
+def write_main_account(tmp_path: Path) -> Path:
+    from vhtk.config import AccountConfig
+
+    path = tmp_path / "accounts" / "main.yaml"
+    account = AccountConfig.model_validate(
+        {
+            "name": "main",
+            "role": "main",
+            "ldplayer": {"index": 9, "adb_serial": "emulator-5572"},
+            "login": {"server": "S9", "username": "m", "password": "p"},
+            "farm": {"map": "Tuyền Châu", "gold_transfer_threshold": 0},
+        }
+    )
+    write_account(path, account)
+    return path
+
+
+def transfer_settings(tmp_path: Path, **orch: object) -> Settings:
+    settings = make_settings(tmp_path, main_batch_window_seconds=0.0, **orch)
+    return settings.model_copy(
+        update={
+            "transfer": settings.transfer.model_copy(
+                update={"enabled": True, "main_stem": "main", "retry_delay_seconds": 900.0}
+            )
+        }
+    )
+
+
+def set_state(settings: Settings, stem: str, **fields: object) -> None:
+    sf = state_file(settings.orchestrator.workers_dir, stem)
+    sf.parent.mkdir(parents=True, exist_ok=True)
+    sf.write_text(json.dumps({"stem": stem, **fields}), encoding="utf-8")
+
+
+def test_coordinator_disabled_does_nothing(tmp_path: Path) -> None:
+    settings = make_settings(tmp_path)
+    h = Harness(tmp_path, settings)
+    coord = TransferCoordinator(settings, h.supervisor, clock=h.clock)
+    assert coord.tick() == []
+
+
+def test_coordinator_opens_session_for_requesting_farm(tmp_path: Path) -> None:
+    settings = transfer_settings(tmp_path)
+    write_test_account(tmp_path, "farm01", index=1)
+    write_main_account(tmp_path)
+    h = Harness(tmp_path, settings)
+    h.supervisor.start("farm01")
+    coord = TransferCoordinator(settings, h.supervisor, clock=h.clock)
+    assert coord.tick() == []  # chưa có cờ -> không làm gì
+    set_state(settings, "farm01", gold_request=True)
+    actions = coord.tick()
+    assert actions == ["start_main:farm01"]
+    workers = settings.orchestrator.workers_dir
+    barrier = json.loads((workers / "transfer.json").read_text(encoding="utf-8"))
+    assert barrier["farm_stem"] == "farm01" and barrier["main_stem"] == "main"
+    assert (workers / "farm01.transfer.json").is_file()
+    assert h.registry.alive("main")
+    assert coord.session is not None and coord.session.farm_stem == "farm01"
+    # đang có chuyến: không mở thêm dù farm khác giơ cờ
+    assert coord.tick() == []
+
+
+def test_coordinator_closes_session_and_backs_off_on_failure(tmp_path: Path) -> None:
+    settings = transfer_settings(tmp_path)
+    write_test_account(tmp_path, "farm01", index=1)
+    write_main_account(tmp_path)
+    h = Harness(tmp_path, settings)
+    h.supervisor.start("farm01")
+    set_state(settings, "farm01", gold_request=True)
+    coord = TransferCoordinator(settings, h.supervisor, clock=h.clock)
+    coord.tick()
+    workers = settings.orchestrator.workers_dir
+    barrier_path = workers / "transfer.json"
+    data = json.loads(barrier_path.read_text(encoding="utf-8"))
+    data["farm"] = {"phase": "failed", "reason": "partner timeout"}
+    data["main"] = {"phase": "failed"}
+    barrier_path.write_text(json.dumps(data), encoding="utf-8")
+    actions = coord.tick()
+    assert actions[0] == "close:farm01:fail" and "stop_main:main" in actions
+    assert not (workers / "farm01.transfer.json").exists()
+    assert not h.registry.alive("main")
+    assert coord.session is None
+    # cờ vẫn còn nhưng đang trong thời gian giãn -> không mở chuyến mới ngay
+    assert coord.tick() == []
+    h.clock.now += 901
+    assert coord.tick() == ["start_main:farm01"]
+
+
+def test_coordinator_pauses_idle_farm_when_slots_are_full(tmp_path: Path) -> None:
+    settings = transfer_settings(tmp_path, max_concurrent_instances=2)
+    write_test_account(tmp_path, "farm01", index=1)
+    write_test_account(tmp_path, "farm02", index=2)
+    write_main_account(tmp_path)
+    h = Harness(tmp_path, settings)
+    h.supervisor.start("farm01")
+    h.supervisor.start("farm02")
+    set_state(settings, "farm01", gold_request=True)
+    coord = TransferCoordinator(settings, h.supervisor, clock=h.clock)
+    actions = coord.tick()
+    assert actions == ["pause_farm:farm02", "start_main:farm01"]
+    assert not h.registry.alive("farm02") and h.registry.alive("farm01")
+    # main thoát (worker main chỉ sống 1 chuyến) với kết quả đã xác minh
+    data = json.loads((settings.orchestrator.workers_dir / "transfer.json").read_text())
+    data["farm"] = {"phase": "done", "verified": True}
+    data["main"] = {"phase": "done", "verified": True}
+    (settings.orchestrator.workers_dir / "transfer.json").write_text(json.dumps(data))
+    actions = coord.tick()
+    assert actions == ["close:farm01:ok", "stop_main:main", "resume_farm:farm02"]
+    assert h.registry.alive("farm02")
+
+
+def test_coordinator_closes_when_main_worker_is_gone(tmp_path: Path) -> None:
+    settings = transfer_settings(tmp_path)
+    write_test_account(tmp_path, "farm01", index=1)
+    write_main_account(tmp_path)
+    h = Harness(tmp_path, settings)
+    h.supervisor.start("farm01")
+    set_state(settings, "farm01", gold_request=True)
+    coord = TransferCoordinator(settings, h.supervisor, clock=h.clock)
+    coord.tick()
+    main_pid = h.registry.info("main")
+    assert main_pid is not None
+    h.live_pids.pop(main_pid.pid, None)  # worker main crash/thoát
+    actions = coord.tick()
+    assert actions[0] == "close:farm01:fail"
+    assert coord.session is None

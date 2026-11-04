@@ -21,6 +21,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from enum import Enum
+from pathlib import Path
 
 import structlog
 
@@ -72,8 +73,14 @@ class FarmSignal(Enum):
 
     HP_LOW = "hp_low"
     BAG_FULL = "bag_full"  # hành trang quá nặng — game khoá võ công, phải về bán
-    GOLD_THRESHOLD = "gold_threshold"  # chưa phát — cần OCR vàng (W3)
+    GOLD_THRESHOLD = "gold_threshold"  # worker phát sau khi đọc tiền lúc bán đồ (W3)
+    TRANSFER = "transfer"  # orchestrator yêu cầu đi giao dịch (file <stem>.transfer.json)
     EQUIP_BROKEN = "equip_broken"  # chưa phát — cần template hỏng đồ (R5)
+
+
+def transfer_request_file(workers_dir: Path, stem: str) -> Path:
+    """Per-account transfer request written by the coordinator (W3)."""
+    return workers_dir / f"{stem}.transfer.json"
 
 
 @dataclass(frozen=True)
@@ -260,6 +267,11 @@ class FarmTask(BaseTask):
             )
         self._nav_attempts = 0
         self.signal: FarmSignal | None = None
+        # yêu cầu đi giao dịch từ orchestrator (W3) — chỉ worker có stem
+        stem = ctx.safety.stem
+        self._transfer_request: Path | None = (
+            transfer_request_file(ctx.settings.orchestrator.workers_dir, stem) if stem else None
+        )
         super().__init__(ctx)
 
     def states(self) -> Sequence[State]:
@@ -522,6 +534,12 @@ class FarmTask(BaseTask):
             if action is MonitorAction.WRONG_MAP:
                 log.warning("left the farm map, re-routing")
                 return S_OPEN_MAP
+            # lệnh đi giao dịch chỉ nhận khi chu kỳ yên ổn — HP thấp/túi đầy
+            # ở trên đã thắng (rút về trước, orchestrator sẽ gọi lại sau)
+            if self._transfer_request is not None and self._transfer_request.exists():
+                self.signal = FarmSignal.TRANSFER
+                log.info("transfer requested by orchestrator, leaving farm")
+                return S_DISABLE_AUTO
             if action is MonitorAction.LOST:
                 raise TaskError("monitor lost track of the screen")
             if action is MonitorAction.REENABLE_AUTO:
