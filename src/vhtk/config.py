@@ -529,13 +529,16 @@ class TradeCoordinates(_StrictModel):
     # Ô số tiền MÌNH đã đặt / bên kia đã đặt trong khung giao dịch (OCR)
     own_offer_rect: tuple[int, int, int, int] = (0, 0, 0, 0)
     partner_offer_rect: tuple[int, int, int, int] = (0, 0, 0, 0)
-    # Điểm tap lên nhân vật bên kia khi 2 bên đứng đúng điểm hẹn (mở menu)
+    # Điểm tap lên nhân vật bên kia khi 2 bên đứng đúng điểm hẹn (chọn mục tiêu)
     partner_tap: tuple[int, int] = (0, 0)
+    # Tên trên BẢNG MỤC TIÊU (đỉnh màn) sau khi chọn người chơi — tap vào đó
+    # mới ra menu người chơi (Tán gẫu/Hảo hữu/Giao dịch/...)
+    plate_name_tap: tuple[int, int] = (0, 0)
 
     def unmeasured(self) -> list[str]:
         """Names of fields still at their placeholder value."""
         out: list[str] = []
-        for name in ("money_input", "partner_tap"):
+        for name in ("money_input", "partner_tap", "plate_name_tap"):
             if getattr(self, name) == (0, 0):
                 out.append(name)
         for name in ("own_offer_rect", "partner_offer_rect"):

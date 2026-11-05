@@ -502,13 +502,24 @@ Thiết kế chốt: giao dịch tay đôi tại điểm hẹn cố định; **m
   validate, từ chối chạy khi thiếu UI contract/sai acc), worker (5: ngưỡng tiền,
   bỏ qua tiền không đọc được, TRANSFER thành công/thất bại, role main),
   coordinator (5: tắt, mở chuyến, đóng + giãn, nhường slot + mở lại, main chết).
-- **Còn thiếu để chạy thật (cần 2 acc trên LDPlayer):** chụp từng bước giao
-  dịch → template `trade/menu_giao_dich`, `btn_dong_y`, `window_header`,
-  `btn_khoa`, `locked_mark`, `partner_locked_mark`, `btn_xac_nhan`, `btn_huy`,
-  `success_notice` + `common/btn_bag`; đo `coordinates.trade.*`; cài paddleocr;
-  đối chiếu flow thật với flow giả định (tap nhân vật → menu "Giao dịch";
-  đặt tiền → Khoá → Xác nhận) rồi sửa FSM nếu lệch. Tra cứu web 04/11 không
-  có hướng dẫn giao dịch cho bản 3C.
+- **Khám phá trên AVD 05/11 — cách MỞ giao dịch (đã kiểm chứng tay):** tap
+  thân người chơi → bảng mục tiêu hiện ở đỉnh màn → **tap TÊN trên bảng** →
+  menu người chơi 8 nút (Tán gẫu / Hảo hữu / **Giao dịch** / Tổ đội / Theo sau /
+  Tin tức / Sổ đen / Tỷ võ). Ngõ cụt đã thử: tap avatar bảng (bỏ chọn), nhấn
+  giữ (chỉ chọn mục tiêu), tap tên trong chat (menu rút gọn KHÔNG có Giao
+  dịch — người ở xa), nút Khoá/Nhanh/"?"/Hướng dẫn. Tra cứu web 04–05/11 không
+  có hướng dẫn cho bản 3C. `_invite` sửa theo flow thật: `partner_tap` →
+  `plate_name_tap` (toạ độ mới, đo AVD [400, 18]) → template
+  `trade/menu_giao_dich`. Đã cắt từ AVD: `trade/menu_giao_dich`,
+  `common/btn_bag` (nút Túi đồ HUD; túi mở xác nhận `money_cells` đúng ô —
+  acc dev vàng 0 / bạc 15 / đồng 64 → test chuyển dùng `currency: bac`).
+- **Còn thiếu để chạy thật (cần 2 acc, bên kia phải chấp nhận):** chụp từ
+  bước bấm "Giao dịch" trở đi → template `trade/btn_dong_y` (popup bên nhận),
+  `window_header`, `btn_khoa`, `locked_mark`, `partner_locked_mark`,
+  `btn_xac_nhan`, `btn_huy`, `success_notice`; đo `coordinates.trade`
+  `money_input` / `own_offer_rect` / `partner_offer_rect` / `partner_tap`; cài
+  paddleocr; đối chiếu flow khung giao dịch (đặt tiền → Khoá → Xác nhận) rồi
+  sửa FSM nếu lệch. Trên LDPlayer phải cắt lại 2 template trên cho `v1.0/`.
 
 ## Test (308 test, không cần thiết bị)
 

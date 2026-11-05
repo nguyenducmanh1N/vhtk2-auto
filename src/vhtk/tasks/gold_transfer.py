@@ -9,10 +9,16 @@ barrier file in ``orchestrator.workers_dir`` (written atomically, polled):
     main side : VERIFY_HUD -> GO_RENDEZVOUS -> WAIT_PARTNER -> ACCEPT
                 -> LOCK -> CONFIRM -> VERIFY_AFTER -> DONE
 
-Trade-window flow assumed from the PC original (JX2): each side puts its
-offer, presses "Khoá", then "Xác nhận"; the window closes on success. Every
-template under ``trade/`` is a UI CONTRACT to be captured on LDPlayer with 2
-accounts — until then VERIFY_HUD refuses to run (missing templates /
+Invite flow VERIFIED on the AVD (2026-11-05): tap the partner's sprite ->
+target plate appears at the top of the HUD -> tap the NAME on that plate ->
+player menu (Tán gẫu / Hảo hữu / Giao dịch / Tổ đội / Theo sau / Tin tức /
+Sổ đen / Tỷ võ) -> tap "Giao dịch". Tapping the plate avatar only deselects;
+tapping a name in chat gives a reduced menu without "Giao dịch".
+
+Trade-window flow is still assumed from the PC original (JX2): each side
+puts its offer, presses "Khoá", then "Xác nhận"; the window closes on
+success. Every template under ``trade/`` is a UI CONTRACT to be captured
+with 2 accounts — until then VERIFY_HUD refuses to run (missing templates /
 unmeasured coordinates), never taps blind.
 
 Safety: PUT_MONEY and CONFIRM go through ``guard_irreversible`` — dry_run
@@ -50,7 +56,7 @@ from vhtk.tasks.navigate import (
 log = structlog.get_logger(__name__)
 
 # -- UI contract (templates/<version>/trade/) ------------------------------------
-TPL_MENU_TRADE = "trade/menu_giao_dich"  # mục "Giao dịch" trong menu khi tap nhân vật
+TPL_MENU_TRADE = "trade/menu_giao_dich"  # nút "Giao dịch" trong menu người chơi
 TPL_INVITE_ACCEPT = "trade/btn_dong_y"  # nút đồng ý trong popup "X mời giao dịch"
 TPL_WINDOW = "trade/window_header"  # tiêu đề khung giao dịch đang mở
 TPL_BTN_LOCK = "trade/btn_khoa"  # nút Khoá (bên mình)
@@ -487,8 +493,16 @@ class TransferFarmTask(_TransferBase):
         return self._arrive_and_wait(S_INVITE, "arrived")
 
     def _invite(self) -> str:
+        # chọn mục tiêu (bảng mục tiêu hiện ở đỉnh màn) rồi tap TÊN trên bảng
+        # mới ra menu người chơi — bảng không có template (tên động) nên 2 cú
+        # tap đầu là toạ độ, xác minh bằng nút "Giao dịch" xuất hiện
         log.warning("using fallback coordinates", target="partner_tap", xy=self._tc.partner_tap)
         self.ctx.device.tap(*self._tc.partner_tap)
+        time.sleep(1.0)
+        log.warning(
+            "using fallback coordinates", target="plate_name_tap", xy=self._tc.plate_name_tap
+        )
+        self.ctx.device.tap(*self._tc.plate_name_tap)
         self._tap_template(TPL_MENU_TRADE, "trade menu entry")
         self._barrier.update_side(self.side, phase="invited")
         if not self._wait_window():

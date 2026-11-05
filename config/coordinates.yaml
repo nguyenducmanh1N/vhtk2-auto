@@ -89,5 +89,9 @@ trade:
   # Ô số tiền MÌNH đã đặt / BÊN KIA đã đặt (x, y, w, h) — OCR đối chiếu
   own_offer_rect: [0, 0, 0, 0]
   partner_offer_rect: [0, 0, 0, 0]
-  # Điểm tap lên nhân vật bên kia khi cả 2 đứng đúng điểm hẹn (mở menu)
+  # Điểm tap lên nhân vật bên kia khi cả 2 đứng đúng điểm hẹn (chọn mục tiêu —
+  # bảng mục tiêu hiện ở đỉnh màn)
   partner_tap: [0, 0]
+  # Tên trên bảng mục tiêu: tap vào mới ra menu người chơi có nút "Giao dịch"
+  # (khám phá trên AVD 2026-11-05; tap avatar bảng chỉ bỏ chọn mục tiêu)
+  plate_name_tap: [400, 18]
