@@ -124,19 +124,16 @@ def test_plain_cycles_until_max(tmp_path: Path) -> None:
     assert st["status"] == "stopped" and st["cycle"] == 3
 
 
-def test_hp_low_triggers_retreat_and_periodic_sell(tmp_path: Path) -> None:
-    # every_n_retreats của settings thật có thể > 1 — ép 2 lần HP_LOW với
-    # every_n_retreats=2 thì lần rút thứ 2 phải bán
+def test_hp_low_retreats_but_never_sells(tmp_path: Path) -> None:
+    # HP_LOW chỉ về nghỉ rồi farm lại — KHÔNG bán tiện thể. sell_results
+    # rỗng: nếu worker gọi sell, FakeSell.run() ném StopIteration -> test đổ
     worker, _, _ = make_worker(
         tmp_path,
         farm_results=[ok(), ok()],
         farm_signals=[FarmSignal.HP_LOW, FarmSignal.HP_LOW],
         retreat_results=[ok(), ok()],
-        sell_results=[ok()],
+        sell_results=[],
         max_cycles=2,
-    )
-    worker.ctx.settings = worker.ctx.settings.model_copy(
-        update={"sell": worker.ctx.settings.sell.model_copy(update={"every_n_retreats": 2})}
     )
     assert worker.run() == 0
 

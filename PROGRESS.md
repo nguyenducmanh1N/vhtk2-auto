@@ -342,8 +342,9 @@ Thêm: `TaskError` (gốc lỗi trong-task, FSM đưa về RECOVER) → `StateTi
   Chỉ kiểm khi khung hình là HUD thật (mỏ neo đọc được).
 - **Luồng:** MONITOR phát `BAG_FULL` sau `bag_full_cycles` chu kỳ liên tiếp
   (ưu tiên: HP thấp > túi đầy > sai map); VERIFY_HUD cũng kiểm ngay lúc xuất phát
-  để khỏi hành quân vô ích. Runner: BAG_FULL → retreat → sell NGAY (không chờ
-  `every_n_retreats`) → farm lại. Chặn lặp: BAG_FULL 3 lần liên tiếp (bán không
+  để khỏi hành quân vô ích. Runner: BAG_FULL → retreat → sell → farm lại.
+  (06/11: bỏ hẳn bán định kỳ `every_n_retreats` — CHỈ túi đầy mới bán, HP_LOW chỉ
+  nghỉ rồi farm lại, để sau này bỏ bước nghỉ không ảnh hưởng luồng bán.) Chặn lặp: BAG_FULL 3 lần liên tiếp (bán không
   làm nhẹ túi — dry_run hoặc blacklist giữ hết) → dừng báo người.
 - **Nghiệm thu AVD 27/10 (túi đầy thật, bán THẬT):** farm phát hiện ngay tại
   VERIFY_HUD (14:23:15) → retreat về Tuyền Châu, nghỉ hồi 97% HP → sell bán

@@ -611,10 +611,13 @@ class FarmTask(BaseTask):
         """Is the bag too heavy to keep farming? ``None`` = can't tell.
 
         Hai tầng phát hiện (27/10):
-        - CẢNH BÁO SỚM: dòng đỏ "Hành trang mang theo quá nhiều vật phẩm"
-          trong khung chat (giảm tốc hồi máu) — thấy là đi bán luôn. Dòng
-          chat trôi nên một lần thấy được latch thêm ``bag_full_cycles``
-          chu kỳ cho policy gom đủ chuỗi liên tiếp.
+        - CẢNH BÁO SỚM (tuỳ chọn ``farm.bag_heavy_notice``, mặc định TẮT):
+          dòng đỏ "Hành trang mang theo quá nhiều vật phẩm" trong khung chat
+          (giảm tốc hồi máu) — thấy là đi bán luôn. Dòng chat trôi nên một
+          lần thấy được latch thêm ``bag_full_cycles`` chu kỳ cho policy gom
+          đủ chuỗi liên tiếp. Tắt mặc định vì game phát dòng này từ ~75% cân
+          nặng và tab "Hệ thống" giữ nó mãi -> báo đầy giả, lặp về thành
+          (2026-11-04).
         - KHOÁ CỨNG: icon Túi đồ vòng đỏ "Đầy" (game khoá võ công). Xác nhận
           kép: template khớp VÀ tỉ lệ pixel đỏ trong ô icon vượt ngưỡng —
           icon thường cùng khối tròn nên một vế là không đủ tin (template
@@ -623,7 +626,8 @@ class FarmTask(BaseTask):
         cfg = self.ctx.settings.farm
         try:
             if (
-                TPL_BAG_HEAVY in self.ctx.vision.store
+                cfg.bag_heavy_notice
+                and TPL_BAG_HEAVY in self.ctx.vision.store
                 and self.ctx.vision.find(TPL_BAG_HEAVY, screenshot=frame) is not None
             ):
                 self._heavy_latch = cfg.bag_full_cycles

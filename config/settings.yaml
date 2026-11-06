@@ -86,8 +86,6 @@ sell:
     - "Phù về thành"
     - "Thuốc hồi sinh lực"
     - "Thuốc hồi nội lực"
-  # Bán 1 lần sau mỗi N chu kỳ rút-về-thành nghỉ (đằng nào cũng đang ở thành)
-  every_n_retreats: 2
   # WHITELIST: chỉ bán ô khớp template icon sell/ok_* với điểm >= ngưỡng này;
   # đồ lạ/mới/chưa có template thì KHÔNG BAO GIỜ bán
   icon_match_threshold: 0.85
@@ -194,6 +192,10 @@ farm:
   bag_full_color: {h: [172, 8], s: [120, 255], v: [80, 255]}
   bag_full_min_red_ratio: 0.12
   bag_full_cycles: 2
+  # Dòng chat đỏ "Hành trang mang theo quá nhiều vật phẩm" (từ ~75% cân nặng,
+  # CHƯA khoá võ công) có tính là túi đầy không. TẮT (04/11): tab Hệ thống giữ
+  # dòng cũ mãi -> tool báo túi đầy liên tục, về thành/cửa hàng/ra farm lặp vô tận.
+  bag_heavy_notice: false
   # --- Auto nhấn chiêu trong lúc farm (phương án A: xoay vòng đơn giản) ---
   # Mỗi chu kỳ MONITOR tool nhấn ô kế tiếp trong slots; chiêu đang hồi thì
   # cú tap vô hại, game tự bỏ qua. Chỉ nhấn khi khung hình đọc được, đang ở

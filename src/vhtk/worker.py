@@ -5,8 +5,10 @@ instances — the orchestrator (W2) just spawns N of these, one process per
 LDPlayer instance. Loop:
 
     FARM -> signal?
-        HP_LOW         -> RETREAT -> [SELL every N retreats] -> FARM
-        BAG_FULL       -> RETREAT -> SELL (always)           -> FARM
+        HP_LOW         -> RETREAT                 -> FARM
+        BAG_FULL       -> RETREAT -> SELL         -> FARM
+    (SELL chỉ chạy khi túi đầy — không bán "tiện thể" mỗi lần về nghỉ,
+    để sau này bỏ bước nghỉ cũng không ảnh hưởng luồng bán.)
         GOLD_THRESHOLD -> flag it in the state file + notify (W3 trades it)
     RELOGIN_REQUIRED from any task -> LOGIN -> retry the task
     ABORTED -> exit 1 (evidence already saved by the task)
@@ -133,7 +135,6 @@ class AccountWorker:
     def run(self) -> int:
         """Run the lifecycle until ABORT (1) or kill-switch/cycle limit (0)."""
         cycles = 0
-        retreats = 0
         bag_full_streak = 0
         self.status.update(status="running", task="", state="", signal="", cycle=0)
         # chạy FARM trước, không login trước: FarmTask tự xử lý màn hình bất
@@ -168,11 +169,8 @@ class AccountWorker:
                 retreat = self._run_with_relogin(self.tasks.retreat(self.ctx))
                 if (rc := self._ended(retreat, "retreat")) is not None:
                     return rc
-                retreats += 1
-                if (
-                    signal is FarmSignal.BAG_FULL
-                    or retreats % self.ctx.settings.sell.every_n_retreats == 0
-                ):
+                # chỉ túi đầy mới đi bán — về nghỉ vì HP thấp thì farm lại ngay
+                if signal is FarmSignal.BAG_FULL:
                     sell = self.tasks.sell(self.ctx)
                     sres = self._run_with_relogin(sell)
                     if sres.status is TaskStatus.KILLED:

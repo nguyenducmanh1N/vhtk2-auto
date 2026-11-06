@@ -19,8 +19,9 @@ stacked (rule #4 of CLAUDE.md):
 4. Quality gate: border color >= ``quality_blacklist_threshold`` blocks.
 5. ``guard_irreversible`` per item — session cap catches tap loops.
 
-The runner calls this task while the character already rests in town
-(piggybacked on the retreat cycle, every ``sell.every_n_retreats`` cycles).
+The worker calls this task only after a ``BAG_FULL`` signal from farm —
+never as a side trip of an HP retreat (changed 2026-11-06 so the rest step
+can be dropped later without touching the sell flow).
 """
 
 from __future__ import annotations

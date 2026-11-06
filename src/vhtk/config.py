@@ -99,8 +99,6 @@ class SellSettings(_StrictModel):
     # Danh sách tên item cấm bán — dùng khi có OCR (Windows); trên Mac lớp
     # bảo vệ chính là WHITELIST icon bên dưới
     item_blacklist: list[str]
-    # Bán 1 lần sau mỗi N chu kỳ rút-về-thành (đằng nào cũng đang ở thành)
-    every_n_retreats: int = Field(gt=0)
     # WHITELIST: chỉ bán ô khớp một template icon ``sell/ok_*`` — đồ lạ,
     # đồ mới, đồ chưa có template thì KHÔNG BAO GIỜ bán
     icon_match_threshold: float = Field(ge=0.0, le=1.0)
@@ -246,6 +244,14 @@ class FarmSettings(_StrictModel):
     bag_full_min_red_ratio: float = Field(ge=0.0, le=1.0, default=0.12)
     # Túi đầy liên tiếp N chu kỳ MONITOR mới phát BAG_FULL (chống nhiễu 1 khung)
     bag_full_cycles: int = Field(gt=0, default=2)
+    # Tầng cảnh báo sớm: dòng chat đỏ "Hành trang mang theo quá nhiều vật
+    # phẩm..." cũng tính là túi đầy. MẶC ĐỊNH TẮT (sự cố 2026-11-04): game
+    # phát dòng này từ ~75% cân nặng — chưa khoá võ công, farm vẫn bình
+    # thường — và tab chat "Hệ thống" giữ dòng cũ mãi không trôi, nên tool
+    # cứ thấy là đòi về bán -> vòng lặp về thành/cửa hàng/ra farm vô tận
+    # (nhất là khi dry_run không bán được gì). Chỉ bật khi muốn đi bán sớm
+    # và đã chắc chắn bán được.
+    bag_heavy_notice: bool = False
     # Auto nhấn chiêu + vật phẩm hồi máu trong vòng MONITOR
     skills: FarmSkillSettings = FarmSkillSettings()
 

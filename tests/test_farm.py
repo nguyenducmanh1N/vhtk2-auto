@@ -1061,6 +1061,7 @@ def test_bag_full_two_tiers_and_latch(tmp_path: Path) -> None:
         store_names=ALL_TEMPLATES | {TPL_BAG_FULL, TPL_BAG_HEAVY},
     )
     task = FarmTask(make_ctx(tmp_path, vision, WorldDevice()))
+    task.ctx.settings.farm.bag_heavy_notice = True
     frame = frame_with_hp(1.0)
 
     # chưa có gì -> không đầy (icon không khớp, không có pixel đỏ trong ô icon)
@@ -1079,3 +1080,19 @@ def test_bag_full_two_tiers_and_latch(tmp_path: Path) -> None:
     # tầng khoá cứng: template khớp nhưng KHÔNG có pixel đỏ -> vẫn False
     vision.present.add(TPL_BAG_FULL)
     assert task._bag_full(frame) is False
+
+
+def test_bag_heavy_notice_ignored_by_default(tmp_path: Path) -> None:
+    """Mặc định dòng chat "quá nhiều vật phẩm" KHÔNG tính là túi đầy — tab Hệ
+    thống giữ dòng cũ mãi, từng gây vòng lặp về thành vô tận (2026-11-04)."""
+    from vhtk.tasks.farm import TPL_BAG_FULL, TPL_BAG_HEAVY
+
+    vision = WorldVision(
+        present={TPL_BAG_HEAVY},
+        store_names=ALL_TEMPLATES | {TPL_BAG_FULL, TPL_BAG_HEAVY},
+    )
+    task = FarmTask(make_ctx(tmp_path, vision, WorldDevice()))
+    assert task.ctx.settings.farm.bag_heavy_notice is False
+    frame = frame_with_hp(1.0)
+    for _ in range(3):
+        assert task._bag_full(frame) is False
