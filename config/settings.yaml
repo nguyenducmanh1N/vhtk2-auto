@@ -58,9 +58,9 @@ safety:
   # Tên file kill-switch ở thư mục gốc; file xuất hiện → dừng sạch mọi task
   kill_switch_file: STOP
   # Giới hạn tốc độ: tối đa N hành động (tap/swipe/key) mỗi phút
-  # (60 — đủ cho chuỗi điều hướng + auto chiêu không bị nghẽn; muốn "giống
-  # người" hơn trên server thật thì hạ lại 30)
-  max_actions_per_minute: 60
+  # (90 từ 2026-11-06 để bán đồ nhanh hơn — 60 thì bán tối đa 1 món/giây;
+  # muốn "giống người" hơn trên server thật thì hạ lại 30-60)
+  max_actions_per_minute: 90
   # Trần số hành động không hoàn tác (bán/mua/giao dịch) THỰC THI mỗi phiên chạy;
   # vượt trần gần như chắc chắn là bug lặp → task ABORT ngay
   max_irreversible_per_session: 200
@@ -99,6 +99,10 @@ sell:
   shop_timeout: 12.0
   # Trần thời gian game tự tìm đường tới NPC trong thành (giây)
   npc_route_timeout: 90.0
+  # Chờ sau mỗi lần tap bán rồi mới chụp lại màn kiểm tra ô kế tiếp (giây).
+  # Món nào cũng được kiểm tra lại trên khung hình mới — giảm số này chỉ
+  # nhanh hơn, không mất an toàn; tăng lên nếu thấy bán sót do game vẽ chậm
+  tap_settle_seconds: 0.15
 
 # Nhận diện phẩm chất item qua màu VIỀN ô item (không dùng template matching).
 # Dải màu theo chuẩn HSV của OpenCV: H 0..179, S/V 0..255.
@@ -140,6 +144,9 @@ farm:
   # Số lần tap điểm đến trên ảnh bản đồ — game hay nuốt tap đầu sau khi
   # preview map vừa đổi, nên cần thử lại tại chỗ
   map_spot_tap_attempts: 3
+  # Chờ map đóng sau mỗi tap TRỪ lần cuối (giây) — tap ăn thì map đóng sau
+  # ~2s; quá ngắn thì tap lại khi map đang đóng dở (tap rơi ra thế giới)
+  map_spot_retap_seconds: 3.5
   # Sau khi map đóng: chờ thấy tìm đường thực sự bắt đầu (giây) — có lúc
   # trễ >5s mới nhúc nhích; quá ngắn thì task mở lại map và tự huỷ chuyến đi
   travel_start_timeout: 20.0

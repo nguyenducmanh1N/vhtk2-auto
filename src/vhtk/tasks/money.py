@@ -19,6 +19,9 @@ from vhtk.core.vision import Image
 
 log = structlog.get_logger(__name__)
 
+# ngôn ngữ OCR đã khởi tạo hỏng trong tiến trình này (thiếu paddlepaddle...)
+_ocr_unavailable: set[str] = set()
+
 
 class NumberReader(Protocol):
     def read_number(self, roi: Image) -> int | None: ...
@@ -65,12 +68,19 @@ class MoneyReader:
 
     def _engine(self) -> NumberReader | None:
         if self._ocr is None and not self._ocr_failed:
+            if self._lang in _ocr_unavailable:
+                # đã hỏng từ chuyến bán trước — không thử lại (mỗi lần thử ~10s)
+                self._ocr_failed = True
+                return None
             try:
                 from vhtk.core.vision import OCR
 
-                self._ocr = OCR(self._lang)
+                ocr = OCR(self._lang)
+                ocr.ensure_ready()
+                self._ocr = ocr
             except Exception as exc:  # paddleocr thiếu/kén máy — không được làm hỏng task
                 self._ocr_failed = True
+                _ocr_unavailable.add(self._lang)
                 log.warning("ocr unavailable, money reading disabled", error=str(exc))
         return self._ocr
 

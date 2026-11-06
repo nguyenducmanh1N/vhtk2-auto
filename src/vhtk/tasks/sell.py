@@ -175,8 +175,10 @@ class SellTask(BaseTask):
                 whitelist_count=len(whitelist),
             )
             return ABORT
+        # lớp phủ (shop, bản đồ) xét TRƯỚC HUD: nhãn "Ngồi" góc trái dưới vẫn
+        # lộ ra khi shop mở — xét HUD trước thì shop không bao giờ được đóng
         hit = self.ctx.vision.wait_any(
-            [TPL_HUD, TPL_BTN_SIT, TPL_BTN_STAND, TPL_SHOP_HEADER, TPL_BTN_CONFIRM_COORDS],
+            [TPL_SHOP_HEADER, TPL_BTN_CONFIRM_COORDS, TPL_HUD, TPL_BTN_SIT, TPL_BTN_STAND],
             timeout=20.0,
         )
         if hit is None:
@@ -292,7 +294,7 @@ class SellTask(BaseTask):
                 self.ctx.device.tap(x + grid.cell[0] // 2, y + grid.cell[1] // 2)
                 self.report.sold += 1
                 self.report.details.append(f"SOLD {detail}")
-                time.sleep(0.4)
+                time.sleep(cfg.tap_settle_seconds)
                 # chụp lại sau mỗi lần bán — lưới đã thay đổi
                 frame = self.ctx.vision.capture_screen()
 

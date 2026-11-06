@@ -128,10 +128,13 @@ class Navigator:
         # màn bản đồ mở sẵn (sót từ trước / người dùng mở tay) che nút
         # Đứng/Ngồi — recovery cố ý không đóng nó (workspace marker), nên
         # phải tự dọn ở đây trước khi thao tác với HUD
-        if self.map_is_open():
+        # 1 khung hình cho cả 2 kiểm tra — mỗi lần chụp trên AVD tốn ~1s
+        frame: Image | None = self.ctx.vision.capture_screen()
+        if self.map_is_open(frame):
             log.info("stray map screen open, closing before stand check")
             self.close_map()
-        m = self.ctx.vision.find(TPL_BTN_STAND)
+            frame = None
+        m = self.ctx.vision.find(TPL_BTN_STAND, screenshot=frame)
         if m is None:
             return
         log.info("character is sitting, standing up")
@@ -527,8 +530,10 @@ class Navigator:
                 "using fallback coordinates", target="map_spot", xy=(x, y), attempt=attempt
             )
             self.ctx.device.tap(x, y)
-            # map tự đóng = tìm đường đã bắt đầu; còn mở = tap không ăn
-            if self.ctx.vision.wait_vanish(TPL_BTN_CONFIRM_COORDS, timeout=self.cfg.map_timeout):
+            # map tự đóng = tìm đường đã bắt đầu; còn mở = tap không ăn.
+            # Lần chưa cuối chỉ chờ ngắn rồi tap lại; lần cuối chờ đủ map_timeout
+            wait = self.cfg.map_timeout if attempt == attempts else self.cfg.map_spot_retap_seconds
+            if self.ctx.vision.wait_vanish(TPL_BTN_CONFIRM_COORDS, timeout=wait):
                 return
         raise VerifyFailed(
             f"map stayed open after tapping the destination point ({attempts} attempts)"

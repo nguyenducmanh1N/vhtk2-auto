@@ -13,6 +13,7 @@ Design notes:
 
 from __future__ import annotations
 
+import importlib.util
 import re
 import time
 from collections.abc import Callable, Sequence
@@ -504,6 +505,10 @@ def _extract_texts(result: Any) -> list[str]:
     return texts
 
 
+# engine PaddleOCR theo ngôn ngữ, dùng chung cả tiến trình (xem OCR._get_engine)
+_ENGINES: dict[str, Any] = {}
+
+
 class OCR:
     """Thin PaddleOCR wrapper with lazy initialization.
 
@@ -515,16 +520,29 @@ class OCR:
         self._lang = lang
         self._engine: Any = None
 
+    def ensure_ready(self) -> None:
+        """Load the engine now; raises if PaddleOCR cannot run on this machine."""
+        self._get_engine()
+
     def _get_engine(self) -> Any:
         if self._engine is None:
+            # worker tạo task mới mỗi chuyến bán — nạp model ~10s mỗi lần là phí,
+            # nên engine dùng chung cả tiến trình
+            self._engine = _ENGINES.get(self._lang)
+        if self._engine is None:
+            if importlib.util.find_spec("paddle") is None:
+                # paddleocr 3.x import được nhưng chỉ nổ lúc .ocr() — báo sớm
+                raise ImportError("paddlepaddle is not installed")
             log.info("initializing paddleocr", lang=self._lang)
             from paddleocr import PaddleOCR  # import nặng — chỉ khi thật sự dùng OCR
 
             try:
-                self._engine = PaddleOCR(lang=self._lang, use_angle_cls=False, show_log=False)
-            except TypeError:
-                # PaddleOCR 3.x đổi tên tham số — fallback về mặc định
-                self._engine = PaddleOCR(lang=self._lang)
+                engine = PaddleOCR(lang=self._lang, use_angle_cls=False, show_log=False)
+            except (TypeError, ValueError):
+                # PaddleOCR 3.x đổi tên tham số (báo ValueError "Unknown argument")
+                # — fallback về mặc định
+                engine = PaddleOCR(lang=self._lang)
+            _ENGINES[self._lang] = self._engine = engine
         return self._engine
 
     def read_text(self, roi: Image, preprocess: bool = True) -> str:

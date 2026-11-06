@@ -698,6 +698,40 @@ def test_tap_map_point_starts_travel_and_map_closes(tmp_path: Path) -> None:
     assert device.taps == [(500, 250)]
 
 
+def test_tap_map_point_swallowed_tap_retaps_after_short_wait(tmp_path: Path) -> None:
+    """Tap đầu bị game nuốt: chỉ chờ map_spot_retap_seconds rồi tap lại,
+    lần cuối mới chờ đủ map_timeout."""
+    waits: list[float | None] = []
+
+    class RecordingVision(WorldVision):
+        def wait_vanish(self, name: str, timeout: float | None = None,
+                        interval: float | None = None) -> bool:
+            waits.append(timeout)
+            return super().wait_vanish(name, timeout, interval)
+
+    vision = RecordingVision(present={TPL_BTN_CONFIRM_COORDS})
+    taps = {"n": 0}
+
+    def on_tap(x: int, y: int) -> None:
+        taps["n"] += 1
+        if taps["n"] == 2:
+            vision.present.discard(TPL_BTN_CONFIRM_COORDS)
+
+    nav = nav_for(tmp_path, vision, WorldDevice(on_tap=on_tap))
+    nav.tap_map_point(500, 250)
+    cfg = nav.cfg
+    assert taps["n"] == 2
+    assert waits == [cfg.map_spot_retap_seconds, cfg.map_spot_retap_seconds]
+
+    waits.clear()
+    vision.present.add(TPL_BTN_CONFIRM_COORDS)
+    taps["n"] = -10  # không bao giờ ăn
+    with pytest.raises(VerifyFailed):
+        nav.tap_map_point(500, 250)
+    assert waits[-1] == cfg.map_timeout
+    assert waits[:-1] == [cfg.map_spot_retap_seconds] * (cfg.map_spot_tap_attempts - 1)
+
+
 def test_tap_map_point_map_stays_open_raises(tmp_path: Path) -> None:
     vision = WorldVision(present={TPL_BTN_CONFIRM_COORDS})
     nav = nav_for(tmp_path, vision, WorldDevice())

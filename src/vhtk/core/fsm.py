@@ -13,7 +13,9 @@ Failure routing:
 - recoverable screen trouble (``TaskError``, ``VisionError``, transient
   ``ADBError``) sends the task to the built-in RECOVER state, which runs the
   deep recovery pass and retries the failed state up to
-  ``safety.max_recover_attempts`` consecutive times;
+  ``safety.max_recover_attempts`` times in a row — counted per failed state
+  and reset only when THAT state completes, so a resume state that always
+  succeeds cannot hide an endless fail loop further down;
 - unrecoverable conditions (``DeviceLost``, ``RateLimited``,
   ``SafetyLimitExceeded``) go straight to ABORT;
 - being thrown back to the login screen ends the run with
@@ -182,7 +184,10 @@ class BaseTask(ABC):
         current = self.initial_state()
         failed_state: str | None = None
         reason = ""
-        consecutive_recovers = 0
+        # số lần fail liên tiếp theo từng state — reset khi chính state đó xong
+        # (reset chung khi BẤT KỲ state nào xong từng gây lặp vô hạn: sell
+        # resume về VERIFY_HUD luôn qua, GO_TO_NPC fail mãi không bị chặn)
+        fail_streaks: dict[str, int] = {}
         total_recovers = 0
         self._log.info("task started", initial=current)
 
@@ -201,17 +206,18 @@ class BaseTask(ABC):
                 )
 
             if current == RECOVER:
-                consecutive_recovers += 1
+                key = failed_state or RECOVER
+                fail_streaks[key] = fail_streaks.get(key, 0) + 1
                 total_recovers += 1
                 limit = self.ctx.settings.safety.max_recover_attempts
-                if consecutive_recovers > limit:
+                if fail_streaks[key] > limit:
                     reason = f"{reason} (gave up after {limit} recover attempts)"
                     current = ABORT
                     continue
                 self._log.warning(
                     "recovering",
                     failed_state=failed_state,
-                    attempt=consecutive_recovers,
+                    attempt=fail_streaks[key],
                     reason=reason,
                 )
                 outcome = self.ctx.recovery.on_state_failure(failed_state or "?", reason)
@@ -285,7 +291,7 @@ class BaseTask(ABC):
                 )
 
             self._log.debug("state transition", frm=current, to=nxt)
-            consecutive_recovers = 0  # state hoàn tất → reset quota recover liên tiếp
+            fail_streaks.pop(current, None)  # state hoàn tất → reset quota của nó
             failed_state = None
             reason = ""
             current = nxt

@@ -111,6 +111,8 @@ class SellSettings(_StrictModel):
     shop_timeout: float = Field(gt=0)
     # Trần thời gian game tự tìm đường tới NPC trong thành (giây)
     npc_route_timeout: float = Field(gt=0)
+    # Chờ sau mỗi lần tap bán, trước khi chụp lại màn hình (giây)
+    tap_settle_seconds: float = Field(default=0.15, ge=0.0)
 
 
 class QualitySettings(_StrictModel):
@@ -183,6 +185,10 @@ class FarmSettings(_StrictModel):
     # Số lần tap điểm đến trên ảnh bản đồ trước khi coi là thất bại — game
     # hay nuốt tap đầu ngay sau khi preview map vừa đổi (quan sát AVD 26/10)
     map_spot_tap_attempts: int = Field(gt=0, default=3)
+    # Chờ map đóng sau mỗi tap điểm đến TRỪ lần cuối (lần cuối chờ đủ
+    # map_timeout): tap ăn thì map đóng sau ~2s, chờ đủ 10s cho tap bị nuốt
+    # là phí — đo AVD 07/11
+    map_spot_retap_seconds: float = Field(gt=0, default=3.5)
     # Chọn map qua KHO data/maps (map chưa có template row_/hud_name_):
     # ngưỡng match mặt nạ chữ của dòng tên (đo 28/10 ngưỡng nhị phân 160:
     # tên ngắn chữ mảnh như "Võ Đang" ~0.87 có mặt, vắng mặt ~0.3-0.6; tap

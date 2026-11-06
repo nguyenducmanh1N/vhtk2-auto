@@ -402,6 +402,38 @@ def test_recovery_resume_state_override(tmp_path: Path) -> None:
     assert order == ["HOME", "WORK", "HOME", "WORK"]
 
 
+def test_resume_state_success_does_not_reset_failing_state_budget(tmp_path: Path) -> None:
+    """HOME luôn qua, WORK fail mãi -> phải ABORT, không lặp vô hạn (lỗi sell 06/11)."""
+    ctx, rec, _ = make_ctx(tmp_path, max_recover=3)
+
+    def do_work() -> str:
+        raise StateTimeout("map screen did not open")
+
+    state_list = [
+        State("HOME", lambda: "WORK", 5.0, frozenset({"WORK"})),
+        State("WORK", do_work, 5.0, frozenset({DONE})),
+    ]
+
+    class FlowTask(BaseTask):
+        name = "flow"
+
+        def states(self) -> Sequence[State]:
+            return state_list
+
+        def initial_state(self) -> str:
+            return "HOME"
+
+        def recovery_resume_state(self, failed_state: str) -> str:
+            return "HOME"
+
+    result = FlowTask(ctx).run()
+
+    assert result.status is TaskStatus.ABORTED
+    assert result.final_state == "WORK"
+    assert "gave up after 3 recover attempts" in result.reason
+    assert len(rec.failure_calls) == 3
+
+
 def test_relogin_is_normal_lets_login_task_continue(tmp_path: Path) -> None:
     """Task có relogin_is_normal=True (login) không bị RELOGIN đá ra ngoài."""
     rec = FakeRecovery(check_outcomes=[RecoveryOutcome.RELOGIN])
