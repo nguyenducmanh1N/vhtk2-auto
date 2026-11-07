@@ -361,6 +361,15 @@ class PathSettings(_StrictModel):
 class Settings(_StrictModel):
     """Top-level schema of ``config/settings.yaml``."""
 
+    # Mặc định chung cho mọi acc (D1b): file acc chỉ ghi phần KHÁC. None =
+    # settings.yaml cũ chưa có mục này -> file acc phải ghi đủ như trước
+    account_defaults: AccountDefaults | None = None
+
+    @property
+    def farm_defaults(self) -> AccountFarm | None:
+        """Shared ``farm`` defaults for :func:`load_account` (None = legacy)."""
+        return self.account_defaults.farm if self.account_defaults is not None else None
+
     ldplayer: LDPlayerSettings
     game: GameSettings
     templates: TemplateSettings
@@ -425,8 +434,39 @@ class AccountFarm(_StrictModel):
         return self
 
 
+ACCOUNT_FARM_FIELDS: tuple[str, ...] = tuple(AccountFarm.model_fields)
+
+
+class AccountFarmOverride(_StrictModel):
+    """``farm:`` as WRITTEN in an account file: every field optional.
+
+    None/absent = "dùng cài đặt chung" (``account_defaults.farm`` in
+    settings.yaml). Same field names as :class:`AccountFarm`, unknown keys
+    still rejected. Range checks run after merging, on :class:`AccountFarm`.
+    """
+
+    map: str | None = None
+    spot: tuple[int, int] | None = None
+    hp_retreat_percent: int | None = None
+    hp_resume_percent: int | None = None
+    retreat_map: str | None = None
+    retreat_spot: tuple[int, int] | None = None
+    gold_transfer_threshold: int | None = None
+    gold_keep: int | None = None
+
+    def overrides(self) -> dict[str, Any]:
+        """Only the fields the account actually sets."""
+        return {k: v for k, v in self.model_dump(mode="json").items() if v is not None}
+
+
+class AccountDefaults(_StrictModel):
+    """``account_defaults`` of settings.yaml — shared by every account."""
+
+    farm: AccountFarm
+
+
 class AccountConfig(_StrictModel):
-    """Schema of one file in ``config/accounts/``."""
+    """Schema of one file in ``config/accounts/`` AFTER merging defaults."""
 
     name: str
     role: Literal["main", "farm"]
@@ -647,13 +687,46 @@ def load_settings(path: Path = DEFAULT_SETTINGS_PATH) -> Settings:
         raise ConfigError(_format_validation_error(source, exc)) from exc
 
 
-def load_account(path: Path) -> AccountConfig:
+def merge_account_farm(
+    raw_farm: Any, defaults: AccountFarm | None, path: Path
+) -> dict[str, Any]:
+    """``farm:`` of an account file merged over the shared defaults.
+
+    Each field the file sets wins; the rest come from ``defaults``. With no
+    defaults (old settings.yaml) the file must be complete — missing keys are
+    then reported by :class:`AccountFarm` validation as before.
+
+    Raises:
+        ConfigError: unknown key / wrong type inside ``farm``.
+    """
+    try:
+        override = AccountFarmOverride.model_validate(raw_farm or {})
+    except ValidationError as exc:
+        raise ConfigError(_format_validation_error(path, exc)) from exc
+    base = defaults.model_dump(mode="json") if defaults is not None else {}
+    return {**base, **override.overrides()}
+
+
+def account_farm_overrides(path: Path) -> list[str]:
+    """Names of the ``farm`` fields an account file sets itself (GUI)."""
+    raw = _read_yaml(path).get("farm") or {}
+    return [k for k in ACCOUNT_FARM_FIELDS if isinstance(raw, dict) and raw.get(k) is not None]
+
+
+def load_account(path: Path, defaults: AccountFarm | None = None) -> AccountConfig:
     """Load and validate a single account config file.
+
+    Args:
+        path: the account YAML.
+        defaults: ``settings.account_defaults.farm`` — fields the file does
+            not set are taken from here. Cross-field rules (resume > retreat)
+            are checked on the MERGED values.
 
     Raises:
         ConfigError: same conditions as :func:`load_settings`.
     """
     data = _read_yaml(path)
+    data = {**data, "farm": merge_account_farm(data.get("farm"), defaults, path)}
     try:
         return AccountConfig.model_validate(data)
     except ValidationError as exc:
@@ -673,12 +746,16 @@ def load_coordinates(path: Path) -> Coordinates:
         raise ConfigError(_format_validation_error(path, exc)) from exc
 
 
-def load_all_accounts(accounts_dir: Path) -> list[AccountConfig]:
+def load_all_accounts(
+    accounts_dir: Path, defaults: AccountFarm | None = None
+) -> list[AccountConfig]:
     """Load every account YAML in ``accounts_dir``, skipping ``example.yaml``."""
     if not accounts_dir.is_dir():
         raise ConfigError(f"accounts directory not found: {accounts_dir}")
     accounts = [
-        load_account(f) for f in sorted(accounts_dir.glob("*.yaml")) if f.name != "example.yaml"
+        load_account(f, defaults)
+        for f in sorted(accounts_dir.glob("*.yaml"))
+        if f.name != "example.yaml"
     ]
     if not accounts:
         raise ConfigError(

@@ -303,7 +303,7 @@ def build_context(
     """Wire device/vision/safety/recovery for one account, with the
     per-account kill-switch (``STOP.<stem>``) armed."""
     stem = account_path.stem
-    account = load_account(account_path)
+    account = load_account(account_path, settings.farm_defaults)
     store = TemplateStore(settings.templates.root)
     device = Device(
         account.ldplayer.adb_serial, settings.safety, settings.ldplayer.resolution, stem=stem

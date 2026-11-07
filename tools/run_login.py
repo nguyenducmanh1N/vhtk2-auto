@@ -38,7 +38,7 @@ def main() -> int:
 
     settings: Settings = load_settings(Path(args.settings))
     setup_logging(settings.logging.dir, settings.logging.level)
-    account = load_account(Path(args.account))
+    account = load_account(Path(args.account), settings.farm_defaults)
 
     store = TemplateStore(settings.templates.root)
     device = Device(account.ldplayer.adb_serial, settings.safety, settings.ldplayer.resolution)

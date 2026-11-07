@@ -18,9 +18,12 @@ from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
 
 from vhtk.config import (
+    ACCOUNT_FARM_FIELDS,
     AccountConfig,
+    AccountFarm,
     ConfigError,
     Coordinates,
+    FarmSettings,
     FarmSkillSettings,
     SafetySettings,
     Settings,
@@ -62,12 +65,23 @@ def _dump(data: CommentedMap, path: Path) -> None:
     path.write_text(buf.getvalue(), encoding="utf-8")
 
 
-def write_account(path: Path, account: AccountConfig, template: Path | None = None) -> None:
+def write_account(
+    path: Path,
+    account: AccountConfig,
+    template: Path | None = None,
+    farm_overrides: set[str] | None = None,
+) -> None:
     """Write an account config to ``path``, preserving comments.
 
     An existing file is updated in place; a new file is seeded from
     ``template`` (normally ``example.yaml``) so new accounts inherit the
     documented layout. The caller passes an already-validated model.
+
+    Args:
+        farm_overrides: with ``account_defaults`` in use (D1b), the ``farm``
+            fields this account sets ITSELF; every other farm key is removed
+            from the file so the shared default applies. ``None`` = legacy:
+            write the whole ``farm`` section.
     """
     if path.exists():
         base = _load_round_trip(path)
@@ -75,7 +89,27 @@ def write_account(path: Path, account: AccountConfig, template: Path | None = No
         base = _load_round_trip(template)
     else:
         base = CommentedMap()
-    _apply(base, account.model_dump(mode="json"))
+    values = account.model_dump(mode="json")
+    if farm_overrides is not None:
+        unknown = set(farm_overrides) - set(ACCOUNT_FARM_FIELDS)
+        if unknown:
+            raise ConfigError(f"unknown farm override fields: {sorted(unknown)}")
+        values["farm"] = {k: v for k, v in values["farm"].items() if k in farm_overrides}
+    _apply(base, values)
+    if farm_overrides is not None:
+        farm_node = base.get("farm")
+        if isinstance(farm_node, CommentedMap):
+            # xoá khoá dùng chung — giữ lại comment đầu mục và các khoá riêng
+            for key in [k for k in farm_node if k not in farm_overrides]:
+                del farm_node[key]
+            if not farm_node:
+                # ruamel dump một mapping block đã rỗng (còn comment con) thành
+                # YAML hỏng ("farm:\n{}") — thay bằng mapping flow rỗng
+                empty = CommentedMap()
+                empty.fa.set_flow_style()
+                base["farm"] = empty
+                # comment của khoá con đầu tiên nằm ở cha — xoá kẻo treo lơ lửng
+                base.ca.items.pop("farm", None)
     _dump(base, path)
 
 
@@ -98,6 +132,28 @@ def write_settings_farm_skills(settings_path: Path, skills: FarmSkillSettings) -
         ConfigError: if the merged document fails schema validation.
     """
     _write_settings_section(settings_path, ("farm", "skills"), skills.model_dump(mode="json"))
+
+
+def write_settings_account_defaults(settings_path: Path, farm: AccountFarm) -> None:
+    """Update ONLY ``account_defaults.farm`` (cài đặt farm chung — D1b).
+
+    Raises:
+        ConfigError: if the merged document fails schema validation.
+    """
+    _write_settings_section(
+        settings_path, ("account_defaults", "farm"), farm.model_dump(mode="json")
+    )
+
+
+def write_settings_farm(settings_path: Path, farm: FarmSettings) -> None:
+    """Update the ``farm`` section EXCEPT ``skills`` (own writer), keeping comments.
+
+    Raises:
+        ConfigError: if the merged document fails schema validation.
+    """
+    values = farm.model_dump(mode="json")
+    values.pop("skills", None)
+    _write_settings_section(settings_path, ("farm",), values)
 
 
 def _write_settings_section(

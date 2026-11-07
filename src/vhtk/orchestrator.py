@@ -33,7 +33,7 @@ from typing import Any, Literal, TypeAlias
 
 import structlog
 
-from vhtk.config import AccountConfig, Settings, load_account
+from vhtk.config import AccountConfig, Settings, account_farm_overrides, load_account
 from vhtk.config_writer import write_account
 from vhtk.core.errors import VhtkError
 from vhtk.core.ldplayer import LDPlayerManager
@@ -187,7 +187,7 @@ class WorkerSupervisor:
             raise OrchestratorError(f"unknown account {stem!r} ({path})")
         if self._registry.alive(stem):
             raise OrchestratorError(f"worker {stem!r} is already running")
-        account = load_account(path)
+        account = load_account(path, self._settings.farm_defaults)
         serial = self._ensure_instance(stem, path, account)
         # xoá kill-switch theo-acc còn sót từ lần dừng trước
         self._stop_file(stem).unlink(missing_ok=True)
@@ -259,7 +259,7 @@ class WorkerSupervisor:
             raise OrchestratorError(f"unknown account {stem!r} ({path})")
         if self._registry.alive(stem):
             raise OrchestratorError(f"worker {stem!r} is already running")
-        account = load_account(path)
+        account = load_account(path, self._settings.farm_defaults)
         if account.ldplayer.index is not None:
             # acc đã có máy: clone thêm chỉ tốn đĩa + để lại instance mồ côi
             raise OrchestratorError(
@@ -274,7 +274,7 @@ class WorkerSupervisor:
         account = account.model_copy(
             update={"ldplayer": account.ldplayer.model_copy(update={"index": index})}
         )
-        write_account(path, account)
+        write_account(path, account, farm_overrides=set(account_farm_overrides(path)))
         log.info("account provisioned", stem=stem, index=index)
         return self.start(stem)
 
@@ -315,7 +315,7 @@ class WorkerSupervisor:
             updated = account.model_copy(
                 update={"ldplayer": account.ldplayer.model_copy(update={"adb_serial": serial})}
             )
-            write_account(path, updated)
+            write_account(path, updated, farm_overrides=set(account_farm_overrides(path)))
             log.warning("adb serial updated in account yaml", stem=stem, serial=serial)
         return serial
 
@@ -325,7 +325,7 @@ class WorkerSupervisor:
         path = self.account_path(stem)
         if not path.is_file():
             return
-        index = load_account(path).ldplayer.index
+        index = load_account(path, self._settings.farm_defaults).ldplayer.index
         if index is None:
             return
         try:
@@ -472,7 +472,7 @@ class TransferCoordinator:
             if path.stem == "example":
                 continue
             try:
-                if load_account(path).role == "farm":
+                if load_account(path, self._settings.farm_defaults).role == "farm":
                     out.append(path.stem)
             except Exception as exc:  # file acc hỏng không được chặn các acc khác
                 log.warning("skipping unreadable account", path=str(path), error=str(exc))

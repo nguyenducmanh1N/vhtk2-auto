@@ -10,8 +10,13 @@ import pytest
 import yaml as pyyaml
 from fastapi.testclient import TestClient
 
-from vhtk.config import ConfigError, load_account, load_settings
-from vhtk.config_writer import write_account, write_settings_safety
+from vhtk.config import AccountFarm, ConfigError, load_account, load_settings
+from vhtk.config_writer import (
+    write_account,
+    write_settings_account_defaults,
+    write_settings_farm,
+    write_settings_safety,
+)
 from vhtk.ui.server import create_app
 
 REPO = Path(__file__).parent.parent
@@ -227,7 +232,8 @@ def test_new_account_starts_without_instance(client: TestClient, workspace: Path
     assert tpl["ldplayer"]["index"] is None
     tpl["name"] = "farm02"
     assert client.post("/api/accounts/farm02", json=tpl).status_code == 200
-    assert load_account(workspace / "accounts" / "farm02.yaml").ldplayer.index is None
+    defaults = load_settings(workspace / "settings.yaml").farm_defaults
+    assert load_account(workspace / "accounts" / "farm02.yaml", defaults).ldplayer.index is None
     row = next(r for r in client.get("/api/accounts").json() if r["stem"] == "farm02")
     assert row["ldplayer_index"] is None
 
@@ -452,3 +458,140 @@ def test_write_settings_routes_overridden_keys_to_local(workspace: Path) -> None
     write_settings_farm_skills(settings_path, skills)
     assert local_path.read_text(encoding="utf-8") == local_text
     assert load_settings(settings_path).farm.skills.cast_interval == 3.0
+
+
+# ---------------------------------------------------------------------------
+# D1b: cài đặt chung (account_defaults) + ghi đè riêng
+# ---------------------------------------------------------------------------
+
+
+def default_farm() -> AccountFarm:
+    return AccountFarm(
+        map="Bắc Tuyền Châu", spot=(626, 234), hp_retreat_percent=30,
+        hp_resume_percent=90, retreat_map="Tuyền Châu", retreat_spot=(768, 140),
+        gold_transfer_threshold=1_000_000,
+    )
+
+
+def test_write_account_with_overrides_drops_shared_keys(workspace: Path) -> None:
+    from vhtk.config import AccountConfig, account_farm_overrides
+
+    target = workspace / "accounts" / "farm01.yaml"
+    account = AccountConfig.model_validate(sample_account())
+    # lần 1: ghi đủ (legacy) rồi lần 2 chỉ giữ 2 trường riêng
+    write_account(target, account, template=workspace / "accounts" / "example.yaml")
+    write_account(target, account, farm_overrides={"map", "gold_transfer_threshold"})
+
+    assert account_farm_overrides(target) == ["map", "gold_transfer_threshold"]
+    raw = pyyaml.safe_load(target.read_text(encoding="utf-8"))
+    assert set(raw["farm"]) == {"map", "gold_transfer_threshold"}
+    assert "Tham số farm" in target.read_text(encoding="utf-8")  # comment đầu mục còn
+    # nạp lại với mặc định chung: phần bỏ đi lấy từ defaults
+    merged = load_account(target, default_farm())
+    assert merged.farm.map == "Tuyền Châu"
+    assert merged.farm.spot == (626, 234)
+    # không có defaults (settings cũ): khoá bỏ đi rơi về mặc định SCHEMA
+    assert load_account(target).farm.spot == (0, 0)
+
+
+def test_write_account_unknown_override_rejected(workspace: Path) -> None:
+    from vhtk.config import AccountConfig
+
+    with pytest.raises(ConfigError, match="unknown farm override"):
+        write_account(
+            workspace / "accounts" / "x.yaml",
+            AccountConfig.model_validate(sample_account()),
+            farm_overrides={"mapp"},
+        )
+
+
+def test_write_settings_account_defaults_round_trip(workspace: Path) -> None:
+    sp = workspace / "settings.yaml"
+    write_settings_account_defaults(sp, default_farm())
+    s = load_settings(sp)
+    assert s.account_defaults is not None and s.account_defaults.farm == default_farm()
+    # ghi lần 2 đổi 1 trường, các trường kia và comment khác giữ nguyên
+    write_settings_account_defaults(sp, default_farm().model_copy(update={"gold_keep": 7}))
+    assert load_settings(sp).account_defaults.farm.gold_keep == 7  # type: ignore[union-attr]
+    assert "Chế độ khô" in sp.read_text(encoding="utf-8")
+
+
+def test_write_settings_farm_keeps_skills(workspace: Path) -> None:
+    sp = workspace / "settings.yaml"
+    before = load_settings(sp).farm
+    skills = before.skills.model_copy(update={"enabled": True})
+    farm = before.model_copy(update={"hp_emergency_percent": 15, "skills": skills})
+    write_settings_farm(sp, farm)
+    after = load_settings(sp).farm
+    assert after.hp_emergency_percent == 15
+    assert after.skills == before.skills  # skills KHÔNG qua writer này
+
+
+def test_account_api_reports_overrides_and_defaults(client: TestClient, workspace: Path) -> None:
+    body = {**sample_account(), "farm": {"map": "Long Tuyền Thôn"}}
+    assert client.post("/api/accounts/farm01", json=body).status_code == 200
+    got = client.get("/api/accounts/farm01").json()
+    assert got["farm_overrides"] == ["map"]
+    assert got["farm"]["map"] == "Long Tuyền Thôn"
+    # phần còn lại lấy từ settings.yaml account_defaults
+    assert got["farm"]["hp_retreat_percent"] == got["farm_defaults"]["hp_retreat_percent"]
+    raw = pyyaml.safe_load((workspace / "accounts" / "farm01.yaml").read_text(encoding="utf-8"))
+    assert set(raw["farm"]) == {"map"}
+
+
+def test_account_put_farm_overrides_list_drops_fields(client: TestClient, workspace: Path) -> None:
+    client.post("/api/accounts/farm01", json=sample_account())
+    body = client.get("/api/accounts/farm01").json()
+    body["farm"]["gold_keep"] = 123
+    body["farm_overrides"] = ["gold_keep"]  # bỏ tích map + ngưỡng vàng
+    assert client.put("/api/accounts/farm01", json=body).status_code == 200
+    raw = pyyaml.safe_load((workspace / "accounts" / "farm01.yaml").read_text(encoding="utf-8"))
+    assert raw["farm"] == {"gold_keep": 123}
+    assert client.get("/api/accounts/farm01").json()["farm_overrides"] == ["gold_keep"]
+
+
+def test_account_put_rejects_bad_override_name(client: TestClient) -> None:
+    body = {**sample_account(), "farm_overrides": ["mapp"]}
+    assert client.post("/api/accounts/farm01", json=body).status_code == 422
+
+
+def test_account_defaults_get_put_and_propagation(client: TestClient, workspace: Path) -> None:
+    client.post("/api/accounts/farm01", json={**sample_account(), "farm": {}})
+    d = client.get("/api/settings/account-defaults").json()
+    assert d["configured"] is True
+    d["farm"]["hp_retreat_percent"] = 42
+    d["farm"]["map"] = "Bắc Tuyền Châu"
+    assert client.put("/api/settings/account-defaults", json={"farm": d["farm"]}).status_code == 200
+    acc = client.get("/api/accounts/farm01").json()
+    assert acc["farm"]["hp_retreat_percent"] == 42 and acc["farm"]["map"] == "Bắc Tuyền Châu"
+    assert acc["farm_overrides"] == []
+    assert "hp_retreat_percent: 42" in (workspace / "settings.yaml").read_text(encoding="utf-8")
+
+
+def test_account_defaults_put_refuses_when_an_account_breaks(client: TestClient) -> None:
+    body = {**sample_account(), "farm": {"hp_resume_percent": 50}}
+    client.post("/api/accounts/farm01", json=body)
+    d = client.get("/api/settings/account-defaults").json()["farm"]
+    d["hp_retreat_percent"] = 60  # farm01 riêng resume=50 -> 50 <= 60 vô nghĩa
+    r = client.put("/api/settings/account-defaults", json={"farm": d})
+    assert r.status_code == 422
+    assert "farm01" in r.json()["detail"]
+    assert client.get("/api/settings/account-defaults").json()["farm"]["hp_retreat_percent"] != 60
+
+
+def test_farm_settings_get_put_ignores_skills(client: TestClient, workspace: Path) -> None:
+    f = client.get("/api/settings/farm").json()
+    before_skills = f["skills"]
+    f["hp_emergency_percent"] = 17
+    f["skills"] = {"enabled": True, "slots": [1]}  # phải bị bỏ qua
+    assert client.put("/api/settings/farm", json=f).status_code == 200
+    after = client.get("/api/settings/farm").json()
+    assert after["hp_emergency_percent"] == 17
+    assert after["skills"] == before_skills
+    assert client.put("/api/settings/farm", json={"hp_emergency_percent": 0}).status_code == 422
+
+
+def test_accounts_template_defaults_to_shared(client: TestClient) -> None:
+    t = client.get("/api/accounts-template").json()
+    assert t["farm_overrides"] == []
+    assert t["farm_defaults"] is not None

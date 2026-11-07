@@ -85,7 +85,7 @@ def grid_points(rect: tuple[int, int, int, int], cols: int, rows: int) -> list[t
 def collect(args: argparse.Namespace) -> int:
     settings: Settings = load_settings(Path(args.settings))
     setup_logging(settings.logging.dir, settings.logging.level)
-    account = load_account(Path(args.account))
+    account = load_account(Path(args.account), settings.farm_defaults)
     coords = load_coordinates(settings.paths.coordinates_file)
     if coords.farm.map_list is None or coords.farm.travel_text_rect is None:
         print("LOI: thieu farm.map_list / farm.travel_text_rect trong coordinates.yaml")

@@ -26,26 +26,13 @@ login:
   # Slot nhân vật trên màn "Chọn nhân vật" (1 = trên cùng)
   character_slot: 1
 
-# Tham số farm cho tài khoản này
+# Tham số farm RIÊNG của tài khoản này. Mặc định chung cho mọi acc nằm ở
+# settings.yaml mục account_defaults.farm (sửa qua GUI "Cài đặt chung").
+# Chỉ ghi ở đây trường nào muốn KHÁC mặc định; trường bỏ trống = dùng chung.
+# Các trường có thể ghi đè: map, spot, hp_retreat_percent, hp_resume_percent,
+# retreat_map, retreat_spot, gold_transfer_threshold, gold_keep.
 farm:
-  # Tên map cày, đúng như hiển thị trong game. Tên này sinh tên template cần có:
-  # map/row_<slug> (dòng trong tab "Tìm map") và map/hud_name_<slug> (tên map trên
-  # HUD) — vd "Long Tuyền Thôn" -> row_long_tuyen_thon, hud_name_long_tuyen_thon
+  # Tên map cày, đúng như hiển thị trong game ('' = lấy theo cài đặt chung)
   map: ''
-  # Điểm farm: PIXEL trên ẢNH bản đồ của màn bản đồ (960x540) — tool tap vào đó,
-  # game tự tìm đường (kể cả xuyên map). Chọn điểm bằng mắt từ ảnh chụp màn bản đồ
-  # (vùng ảnh bản đồ khoảng x 350-823, y 143-390). [0, 0] = chưa cấu hình
-  spot: [0, 0]
-  # HP dưới ngưỡng này (%) liên tiếp nhiều chu kỳ -> tín hiệu HP_LOW, rút về nghỉ
-  hp_retreat_percent: 30
-  # Nghỉ tới khi HP hồi >= ngưỡng này (%) mới quay lại farm (phải > hp_retreat_percent)
-  hp_resume_percent: 90
-  # Map + điểm an toàn để rút về khi HP thấp (thường là trong thành);
-  # retreat_spot cùng hệ quy chiếu với spot (pixel trên ảnh bản đồ)
-  retreat_map: ''
-  retreat_spot: [0, 0]
-  # Ngưỡng vàng: vượt ngưỡng thì kích hoạt chuyển vàng về acc main
-  # (đơn vị = transfer.currency trong settings.yaml; đọc OCR lúc mở túi bán đồ)
+  # Ngưỡng vàng chuyển về main (đơn vị = transfer.currency trong settings.yaml)
   gold_transfer_threshold: 1000000
-  # Số tiền giữ lại trên acc farm sau mỗi lần chuyển (mua thuốc, sửa đồ)
-  gold_keep: 0

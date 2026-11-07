@@ -118,7 +118,7 @@ def main() -> int:
     args = parser.parse_args()
 
     settings: Settings = load_settings(Path(args.settings))
-    account = load_account(Path(args.account))
+    account = load_account(Path(args.account), settings.farm_defaults)
     setup_logging(settings.logging.dir, settings.logging.level)
     coords = load_coordinates(settings.paths.coordinates_file)
     geom = coords.farm.map_list

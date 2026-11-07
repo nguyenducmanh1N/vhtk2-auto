@@ -25,17 +25,24 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
 from vhtk.config import (
+    ACCOUNT_FARM_FIELDS,
     AccountConfig,
+    AccountFarm,
     ConfigError,
+    FarmSettings,
     FarmSkillSettings,
     SafetySettings,
+    account_farm_overrides,
     load_account,
     load_coordinates,
     load_settings,
+    merge_account_farm,
 )
 from vhtk.config_writer import (
     write_account,
     write_coordinates_skill_slots,
+    write_settings_account_defaults,
+    write_settings_farm,
     write_settings_farm_skills,
     write_settings_safety,
 )
@@ -115,6 +122,26 @@ def create_app(
             raise HTTPException(400, detail=f"ten file khong hop le: {stem!r}")
         return accounts_dir() / f"{stem}.yaml"
 
+    def farm_defaults() -> AccountFarm | None:
+        """``account_defaults.farm`` of settings.yaml; None = legacy (no section)."""
+        return load_settings(settings_path).farm_defaults
+
+    def account_payload(stem: str, path: Path) -> dict[str, Any]:
+        """Merged account + which farm fields the file sets itself (D1b).
+
+        Without ``account_defaults`` every farm field counts as "riêng" so
+        the GUI shows the legacy all-editable form.
+        """
+        defaults = farm_defaults()
+        acc = load_account(path, defaults)
+        overrides = account_farm_overrides(path) if defaults else list(ACCOUNT_FARM_FIELDS)
+        return {
+            "stem": stem,
+            **acc.model_dump(mode="json"),
+            "farm_overrides": overrides,
+            "farm_defaults": defaults.model_dump(mode="json") if defaults else None,
+        }
+
     # -- accounts --------------------------------------------------------------
 
     @app.get("/api/accounts")
@@ -127,7 +154,7 @@ def create_app(
             if f.name == EXAMPLE_NAME:
                 continue
             try:
-                acc = load_account(f)
+                acc = load_account(f, farm_defaults())
                 rows.append(
                     {
                         "stem": f.stem,
@@ -148,7 +175,7 @@ def create_app(
         if not path.is_file():
             raise HTTPException(404, detail=f"khong tim thay tai khoan {stem!r}")
         try:
-            return {"stem": stem, **load_account(path).model_dump(mode="json")}
+            return account_payload(stem, path)
         except ConfigError as exc:
             raise HTTPException(422, detail=str(exc)) from exc
 
@@ -163,7 +190,7 @@ def create_app(
         path = account_path(stem)
         if not path.is_file():
             raise HTTPException(404, detail=f"khong tim thay tai khoan {stem!r}")
-        serial = load_account(path).ldplayer.adb_serial
+        serial = load_account(path, farm_defaults()).ldplayer.adb_serial
         try:
             r = subprocess.run(
                 ["adb", "-s", serial, "exec-out", "screencap", "-p"],
@@ -179,14 +206,43 @@ def create_app(
 
     @app.put("/api/accounts/{stem}")
     def put_account(stem: str, body: dict[str, Any]) -> dict[str, str]:
+        """Save an account; ``farm`` is merged over the shared defaults.
+
+        ``farm_overrides`` (optional list of field names) says which farm
+        fields are the account's OWN; the rest are dropped from the file so
+        the shared value applies. Absent = every field present in ``farm``.
+        """
         path = account_path(stem)
         body.pop("stem", None)
+        body.pop("farm_defaults", None)
+        wanted = body.pop("farm_overrides", None)
+        if wanted is not None and (
+            not isinstance(wanted, list) or not set(wanted) <= set(ACCOUNT_FARM_FIELDS)
+        ):
+            raise HTTPException(422, detail="farm_overrides phai la danh sach ten truong farm")
+        raw_farm = body.get("farm") or {}
+        if not isinstance(raw_farm, dict):
+            raise HTTPException(422, detail="farm phai la mot mapping")
+        if wanted is not None:
+            raw_farm = {k: v for k, v in raw_farm.items() if k in wanted}
+        defaults = farm_defaults()
         try:
-            account = AccountConfig.model_validate(body)
+            merged = merge_account_farm(raw_farm, defaults, path)
+            account = AccountConfig.model_validate({**body, "farm": merged})
+        except ConfigError as exc:
+            raise HTTPException(422, detail=str(exc)) from exc
         except ValidationError as exc:
             raise HTTPException(422, detail=_validation_detail(exc)) from exc
-        write_account(path, account, template=accounts_dir() / EXAMPLE_NAME)
-        log.info("account saved", stem=stem)
+        overrides: set[str] | None = None
+        if defaults is not None:
+            overrides = (
+                set(wanted) if wanted is not None
+                else {k for k, v in raw_farm.items() if v is not None}
+            )
+        write_account(
+            path, account, template=accounts_dir() / EXAMPLE_NAME, farm_overrides=overrides
+        )
+        log.info("account saved", stem=stem, farm_overrides=sorted(overrides or []))
         return {"status": "saved", "stem": stem}
 
     @app.post("/api/accounts/{stem}")
@@ -211,7 +267,14 @@ def create_app(
         example = accounts_dir() / EXAMPLE_NAME
         if example.is_file():
             try:
-                return load_account(example).model_dump(mode="json")
+                defaults = farm_defaults()
+                acc = load_account(example, defaults)
+                # acc mới: mặc định mọi trường farm dùng chung
+                return {
+                    **acc.model_dump(mode="json"),
+                    "farm_overrides": [] if defaults else list(ACCOUNT_FARM_FIELDS),
+                    "farm_defaults": defaults.model_dump(mode="json") if defaults else None,
+                }
             except ConfigError:
                 pass
         raise HTTPException(404, detail="example.yaml khong doc duoc")
@@ -308,7 +371,7 @@ def create_app(
                 continue
             row = sup.worker_status(f.stem)
             try:
-                acc = load_account(f)
+                acc = load_account(f, farm_defaults())
                 row.update(name=acc.name, role=acc.role,
                            ldplayer_index=acc.ldplayer.index,
                            adb_serial=acc.ldplayer.adb_serial)
@@ -387,6 +450,66 @@ def create_app(
             dry_run=safety.dry_run,
             confirm_mode=safety.confirm_mode,
         )
+        return {"status": "saved"}
+
+    # -- cài đặt chung (D1b): farm mặc định cho mọi acc + thông số farm toàn cục ----
+
+    @app.get("/api/settings/account-defaults")
+    def get_account_defaults() -> dict[str, Any]:
+        d = farm_defaults()
+        return {"configured": d is not None, "farm": d.model_dump(mode="json") if d else None}
+
+    @app.put("/api/settings/account-defaults")
+    def put_account_defaults(body: dict[str, Any]) -> dict[str, Any]:
+        """Save the shared farm defaults — refused if any account would break.
+
+        An account that overrides only one side of a cross-field rule (vd
+        riêng hp_resume=90, chung đổi hp_retreat=95) would fail to load
+        afterwards; better to reject here and name it.
+        """
+        raw = body.get("farm", body)
+        try:
+            farm = AccountFarm.model_validate(raw)
+        except ValidationError as exc:
+            raise HTTPException(422, detail=_validation_detail(exc)) from exc
+        broken: list[str] = []
+        folder = accounts_dir()
+        for f in sorted(folder.glob("*.yaml")) if folder.is_dir() else []:
+            if f.name == EXAMPLE_NAME:
+                continue
+            try:
+                load_account(f, farm)
+            except ConfigError as exc:
+                broken.append(f"{f.stem}: {exc.args[0].splitlines()[-1].strip()}")
+        if broken:
+            raise HTTPException(
+                422, detail="cai dat chung moi lam hong tai khoan: " + "; ".join(broken)
+            )
+        try:
+            write_settings_account_defaults(settings_path, farm)
+        except ConfigError as exc:
+            raise HTTPException(422, detail=str(exc)) from exc
+        log.info("account defaults saved", map=farm.map, hp_retreat=farm.hp_retreat_percent)
+        return {"status": "saved"}
+
+    @app.get("/api/settings/farm")
+    def get_farm_settings() -> dict[str, Any]:
+        return load_settings(settings_path).farm.model_dump(mode="json")
+
+    @app.put("/api/settings/farm")
+    def put_farm_settings(body: dict[str, Any]) -> dict[str, str]:
+        """Update global farm knobs; ``skills`` has its own endpoint and is ignored."""
+        body.pop("skills", None)
+        current = load_settings(settings_path).farm.model_dump(mode="json")
+        try:
+            farm = FarmSettings.model_validate({**current, **body})
+        except ValidationError as exc:
+            raise HTTPException(422, detail=_validation_detail(exc)) from exc
+        try:
+            write_settings_farm(settings_path, farm)
+        except ConfigError as exc:
+            raise HTTPException(422, detail=str(exc)) from exc
+        log.info("farm settings saved")
         return {"status": "saved"}
 
     # -- farm skills (auto nhấn chiêu + vật phẩm hồi máu) --------------------------
