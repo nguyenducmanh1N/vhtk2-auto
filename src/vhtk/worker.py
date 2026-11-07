@@ -41,7 +41,7 @@ from vhtk.core.device import Device
 from vhtk.core.fsm import TaskContext, TaskResult, TaskStatus
 from vhtk.core.recovery import Recovery
 from vhtk.core.safety import Safety
-from vhtk.core.vision import TemplateStore, Vision
+from vhtk.core.vision import Image, TemplateStore, Vision
 from vhtk.logging_setup import setup_logging
 from vhtk.notify import NullNotifier
 from vhtk.registry import WorkerRegistry
@@ -81,10 +81,24 @@ class WorkerTasks:
 class StatusWriter:
     """Atomically maintain this worker's state file for GUI/orchestrator."""
 
-    def __init__(self, path: Path, stem: str) -> None:
+    # nhịp tim ghi tối đa mỗi N giây — mỗi lần chụp màn đều gọi beat()
+    HEARTBEAT_EVERY_S = 20.0
+
+    def __init__(
+        self, path: Path, stem: str, clock: Callable[[], float] = time.time
+    ) -> None:
         self._path = path
         self._stem = stem
+        self._clock = clock
+        self._last_beat = 0.0
         self._data: dict[str, Any] = {"stem": stem, "pid": os.getpid()}
+
+    def beat(self) -> None:
+        """Heartbeat: the worker is still capturing frames (watchdog hang check)."""
+        now = self._clock()
+        if now - self._last_beat >= self.HEARTBEAT_EVERY_S:
+            self._last_beat = now
+            self.update(heartbeat_at=now)
 
     def update(self, **fields: Any) -> None:
         """Merge fields and rewrite the state file; never raises."""
@@ -298,17 +312,32 @@ class AccountWorker:
 
 
 def build_context(
-    settings: Settings, account_path: Path, *, on_state: Callable[[str, str], None] | None = None
+    settings: Settings,
+    account_path: Path,
+    *,
+    on_state: Callable[[str, str], None] | None = None,
+    on_frame: Callable[[], None] | None = None,
 ) -> TaskContext:
     """Wire device/vision/safety/recovery for one account, with the
-    per-account kill-switch (``STOP.<stem>``) armed."""
+    per-account kill-switch (``STOP.<stem>``) armed.
+
+    ``on_frame`` is called on every screenshot (heartbeat for the watchdog).
+    """
     stem = account_path.stem
     account = load_account(account_path, settings.farm_defaults)
     store = TemplateStore(settings.templates.root)
     device = Device(
         account.ldplayer.adb_serial, settings.safety, settings.ldplayer.resolution, stem=stem
     )
-    vision = Vision(store, device.screenshot, settings.vision, settings.templates.match_threshold)
+    capture = device.screenshot
+    if on_frame is not None:
+        beat = on_frame
+
+        def capture() -> Image:
+            beat()
+            return device.screenshot()
+
+    vision = Vision(store, capture, settings.vision, settings.templates.match_threshold)
     notifier = NullNotifier()
     safety = Safety(settings.safety, notifier, settings.logging.dir / "dry_run", stem=stem)
     recovery = Recovery(
@@ -344,6 +373,7 @@ def run_worker(settings_path: Path, account_path: Path, max_cycles: int = 0) -> 
         settings,
         account_path,
         on_state=lambda task, st: status.update(task=task, state=st),
+        on_frame=status.beat,
     )
     worker = AccountWorker(ctx=ctx, stem=stem, status=status, max_cycles=max_cycles)
     try:

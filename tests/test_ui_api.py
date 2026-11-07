@@ -37,6 +37,8 @@ def workspace(tmp_path: Path) -> Path:
     text = text.replace(
         "coordinates_file: config/coordinates.yaml", f"coordinates_file: {cfg / 'coordinates.yaml'}"
     )
+    # registry/desired.json của test KHÔNG được đụng logs/workers thật
+    text = text.replace("workers_dir: logs/workers", f"workers_dir: {tmp_path / 'workers'}")
     # test kho map/template viết cho dữ liệu AVD — cố định version, không theo
     # settings.yaml của máy đang chạy (Windows trỏ v1.0 kho chưa đủ tên map)
     text = re.sub(r"(?m)^(\s+version:)\s*\S+", r"\1 v1.0-avd", text, count=1)
@@ -46,7 +48,8 @@ def workspace(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def client(workspace: Path) -> TestClient:
-    return TestClient(create_app(workspace / "settings.yaml"))
+    return TestClient(create_app(workspace / "settings.yaml", start_coordinator=False,
+                                 background_ops=False))
 
 
 def sample_account(name: str = "farm01") -> dict[str, object]:
@@ -300,6 +303,8 @@ class FakeSupervisor:
         self.running: set[str] = set()
         self.calls: list[tuple[str, str]] = []
         self.fail_with: Exception | None = None
+        self.devices_on: set[str] = set()  # máy bật nhưng chưa có worker
+        self.states: dict[str, dict[str, object]] = {}  # state file giả
 
     class _Registry:
         def __init__(self, outer: FakeSupervisor) -> None:
@@ -322,8 +327,14 @@ class FakeSupervisor:
             "stem": stem,
             "running": stem in self.running,
             "pid": 4242 if stem in self.running else None,
-            "state": {},
+            "state": self.states.get(stem, {}),
         }
+
+    def is_alive(self, stem: str) -> bool:
+        return stem in self.running
+
+    def instance_states(self, stems: list[str]) -> dict[str, bool | None]:
+        return {s: (s in self.running or s in self.devices_on) for s in stems}
 
     def _maybe_fail(self) -> None:
         if self.fail_with is not None:
@@ -360,7 +371,8 @@ def fake_supervisor() -> FakeSupervisor:
 @pytest.fixture()
 def wclient(workspace: Path, fake_supervisor: FakeSupervisor) -> TestClient:
     return TestClient(
-        create_app(workspace / "settings.yaml", supervisor_factory=lambda: fake_supervisor)
+        create_app(workspace / "settings.yaml", supervisor_factory=lambda: fake_supervisor,
+                   start_coordinator=False, background_ops=False)
     )
 
 
@@ -611,3 +623,73 @@ def test_writing_spot_lists_keeps_next_key_comment(workspace: Path) -> None:
     assert "spot: [1, 2]" in text and "retreat_spot: [3, 4]" in text
     farm = load_settings(sp).account_defaults.farm  # type: ignore[union-attr]
     assert farm.spot == (1, 2) and farm.retreat_spot == (3, 4)
+
+
+# ---------------------------------------------------------------------------
+# Fleet: đồng bộ trang Thiết bị, khoá thao tác, toàn hệ thống, watchdog
+# ---------------------------------------------------------------------------
+
+
+def test_workers_rows_report_device_phase(
+    wclient: TestClient, fake_supervisor: FakeSupervisor
+) -> None:
+    wclient.post("/api/accounts/farm01", json=sample_account())
+    row = wclient.get("/api/workers").json()[0]
+    assert row["phase"] == "off" and row["instance"] is False and row["op"] is None
+    # máy LDPlayer đã bật nhưng chưa có worker -> KHÔNG còn là "off"
+    fake_supervisor.devices_on.add("farm01")
+    assert wclient.get("/api/workers").json()[0]["phase"] == "device_on"
+    wclient.post("/api/workers/farm01/start")
+    row = wclient.get("/api/workers").json()[0]
+    assert row["phase"] == "running" and row["desired"] == "running"
+
+
+def test_second_click_while_device_busy_is_refused(
+    wclient: TestClient, fake_supervisor: FakeSupervisor
+) -> None:
+    wclient.post("/api/accounts/farm01", json=sample_account())
+    locks = wclient.app.state.locks  # type: ignore[attr-defined]
+    locks.try_begin("farm01", "start")  # đang bật dở (boot vài phút)
+    assert wclient.get("/api/workers").json()[0]["phase"] == "busy"
+    r = wclient.post("/api/workers/farm01/start")
+    assert r.status_code == 409 and "dang start" in r.json()["detail"]
+    assert fake_supervisor.calls == []
+    locks.end("farm01")
+    assert wclient.post("/api/workers/farm01/start").status_code == 200
+
+
+def test_system_start_and_stop_all(wclient: TestClient, fake_supervisor: FakeSupervisor) -> None:
+    wclient.post("/api/accounts/farm01", json=sample_account("farm01"))
+    wclient.post("/api/accounts/main", json={**sample_account("main"), "role": "main"})
+    r = wclient.post("/api/system/start")
+    assert r.status_code == 200 and r.json()["total"] == 1
+    assert fake_supervisor.calls == [("start", "farm01")]  # main chỉ mở khi chuyển vàng
+    st = wclient.get("/api/system").json()
+    assert st["op"] is None and st["last_op"] == "start_all" and st["done"] == 1
+    wclient.post("/api/system/stop")
+    assert sorted(fake_supervisor.calls[1:]) == [("stop", "farm01"), ("stop", "main")]
+    rows = {r["stem"]: r for r in wclient.get("/api/workers").json()}
+    assert rows["farm01"]["desired"] == "stopped"
+    assert wclient.post("/api/system/nope").status_code == 404
+
+
+def test_watchdog_tick_restarts_failed_worker(
+    wclient: TestClient, fake_supervisor: FakeSupervisor
+) -> None:
+    wclient.post("/api/accounts/farm01", json=sample_account())
+    wclient.post("/api/workers/farm01/start")
+    fake_supervisor.running.discard("farm01")  # worker chết vì mất mạng
+    fake_supervisor.states["farm01"] = {
+        "status": "aborted", "task": "farm", "reason": "requested by state 'TAP_SPOT'",
+    }
+    tick = wclient.app.state.watchdog_tick  # type: ignore[attr-defined]
+    assert tick() == []  # mới phát hiện: thẻ đỏ + hẹn giờ chạy lại
+    row = wclient.get("/api/workers").json()[0]
+    assert row["phase"] == "failed" and row["health"]["retry_in"] > 0
+    wclient.app.state.watchdog.health("farm01").next_retry_at = 0.0  # type: ignore[attr-defined]
+    assert tick() == ["farm01:start"]
+    assert fake_supervisor.calls[-1] == ("start", "farm01")
+    # người bấm Dừng -> watchdog thôi hồi sinh
+    wclient.post("/api/workers/farm01/stop")
+    fake_supervisor.states["farm01"] = {"status": "aborted", "reason": "x"}
+    assert tick() == []

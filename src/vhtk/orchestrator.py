@@ -91,6 +91,16 @@ def _default_boot_probe(serial: str) -> bool:
     return r.returncode == 0 and r.stdout.strip() == "1"
 
 
+def _default_list_serials() -> list[str]:
+    try:
+        import adbutils
+
+        return [d.serial for d in adbutils.adb.device_list() if d.get_state() == "device"]
+    except Exception as exc:  # adb server chết -> coi như không thiết bị nào bật
+        log.warning("cannot list adb devices", error=str(exc))
+        return []
+
+
 def _default_proc_stop(pid: int, hard: bool) -> None:
     import psutil
 
@@ -130,6 +140,7 @@ class WorkerSupervisor:
         proc_stop: ProcStopper | None = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
+        list_serials: Callable[[], list[str]] | None = None,
     ) -> None:
         self._settings = settings
         self._settings_path = settings_path
@@ -141,6 +152,7 @@ class WorkerSupervisor:
         self._proc_stop = proc_stop or _default_proc_stop
         self._clock = clock
         self._sleep = sleep
+        self._list_serials = list_serials or _default_list_serials
 
     # -- queries -----------------------------------------------------------------
 
@@ -150,6 +162,39 @@ class WorkerSupervisor:
 
     def account_path(self, stem: str) -> Path:
         return self._settings.paths.accounts_dir / f"{stem}.yaml"
+
+    def is_alive(self, stem: str) -> bool:
+        """Whether the account's worker process is running."""
+        return self._registry.alive(stem)
+
+    def instance_states(self, stems: list[str]) -> dict[str, bool | None]:
+        """Is each account's DEVICE up? (independent of its worker process)
+
+        Managed LDPlayer: one ``ldconsole list2``; unmanaged (Mac/AVD): the
+        account's serial listed by ``adb devices``. ``None`` = unknown
+        (no instance assigned, account file unreadable, query failed).
+        """
+        out: dict[str, bool | None] = {s: None for s in stems}
+        accounts: dict[str, AccountConfig] = {}
+        for s in stems:
+            try:
+                accounts[s] = load_account(self.account_path(s), self._settings.farm_defaults)
+            except Exception:  # file acc hỏng: hiện "không rõ", không chặn acc khác
+                continue
+        if self._cfg.manage_instances and self._ld is not None:
+            try:
+                running = self._ld.running_indices()
+            except VhtkError as exc:
+                log.warning("cannot query instances", error=str(exc))
+                return out
+            for s, acc in accounts.items():
+                if acc.ldplayer.index is not None:
+                    out[s] = acc.ldplayer.index in running
+            return out
+        serials = set(self._list_serials())
+        for s, acc in accounts.items():
+            out[s] = acc.ldplayer.adb_serial in serials
+        return out
 
     def worker_status(self, stem: str) -> dict[str, Any]:
         """Registry + state-file view of one worker (no process poking)."""

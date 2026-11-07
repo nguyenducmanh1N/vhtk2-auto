@@ -48,6 +48,14 @@ from vhtk.config_writer import (
 )
 from vhtk.core.errors import VhtkError
 from vhtk.core.ldplayer import LDPlayerManager
+from vhtk.fleet import (
+    DesiredState,
+    FleetController,
+    OpLocks,
+    SystemOp,
+    Watchdog,
+    device_phase,
+)
 from vhtk.mapstore import MapStore
 from vhtk.mapstore import maps_dir as store_maps_dir
 from vhtk.orchestrator import OrchestratorError, TransferCoordinator, WorkerSupervisor
@@ -72,6 +80,7 @@ def create_app(
     settings_path: Path = Path("config/settings.yaml"),
     supervisor_factory: Callable[[], WorkerSupervisor] | None = None,
     start_coordinator: bool = True,
+    background_ops: bool = True,
 ) -> FastAPI:
     """Build the FastAPI app bound to one settings file.
 
@@ -80,8 +89,11 @@ def create_app(
         supervisor_factory: WorkerSupervisor builder override (tests); the
             default builds one per request from the CURRENT settings, with an
             LDPlayerManager only when ``orchestrator.manage_instances`` is on.
-        start_coordinator: run the W3 transfer coordinator thread when
-            ``transfer.enabled`` is on (tests pass False).
+        start_coordinator: run the background threads — W3 transfer
+            coordinator (when ``transfer.enabled``) and the fleet watchdog
+            (tests pass False and drive ``app.state.watchdog_tick`` by hand).
+        background_ops: run system-wide ops ("Chạy tất cả"...) in a thread;
+            tests pass False to run them inline.
     """
     app = FastAPI(title="VHTK2 Auto Tool — Quản lý", docs_url=None, redoc_url=None)
 
@@ -98,6 +110,36 @@ def create_app(
         return WorkerSupervisor(settings, settings_path, ld=ld)
 
     make_supervisor = supervisor_factory or default_supervisor
+
+    # -- fleet: khoá thao tác từng máy, trạng thái "muốn chạy", watchdog --------
+    try:
+        _boot = load_settings(settings_path)
+        _orch = _boot.orchestrator
+    except ConfigError:
+        from vhtk.config import OrchestratorSettings
+
+        _orch = OrchestratorSettings()
+    locks = OpLocks()
+    desired = DesiredState(_orch.workers_dir / "desired.json")
+    watchdog = Watchdog(_orch.watchdog)
+    fleet = FleetController(
+        locks, desired, watchdog, make_supervisor,
+        lambda: load_settings(settings_path).orchestrator.max_concurrent_instances,
+    )
+    app.state.locks, app.state.desired, app.state.watchdog = locks, desired, watchdog
+    app.state.fleet = fleet
+
+    def run_locked(stem: str, op: str, fn: Callable[[], Any]) -> Any:
+        """One lifecycle op per device; a second click while busy -> 409."""
+        if fleet.busy():
+            raise HTTPException(409, detail="dang chay thao tac toan he thong, cho xong")
+        busy = locks.try_begin(stem, op)
+        if busy is not None:
+            raise HTTPException(409, detail=f"{stem}: dang {busy}, cho xong")
+        try:
+            return fn()
+        finally:
+            locks.end(stem)
 
     @app.exception_handler(ConfigError)
     def config_error_handler(request: Request, exc: ConfigError) -> JSONResponse:
@@ -360,16 +402,26 @@ def create_app(
 
     @app.get("/api/workers")
     def list_workers() -> list[dict[str, Any]]:
-        """Every account with its worker's registry + state-file status."""
+        """Every account: worker process + device state + watchdog view.
+
+        ``phase`` (fleet.device_phase) is what the card shows; buttons follow
+        it, so a device that is up but has no worker no longer offers
+        "Mở & đăng nhập", and a device mid-boot offers nothing.
+        """
         sup = make_supervisor()
         rows: list[dict[str, Any]] = []
         folder = accounts_dir()
         if not folder.is_dir():
             return rows
-        for f in sorted(folder.glob("*.yaml")):
-            if f.name == EXAMPLE_NAME:
-                continue
-            row = sup.worker_status(f.stem)
+        stems = [f.stem for f in sorted(folder.glob("*.yaml")) if f.name != EXAMPLE_NAME]
+        try:
+            instances = sup.instance_states(stems)
+        except Exception as exc:  # truy vấn máy lỗi không được làm hỏng cả trang
+            log.warning("instance state query failed", error=str(exc))
+            instances = {s: None for s in stems}
+        for stem in stems:
+            f = folder / f"{stem}.yaml"
+            row = sup.worker_status(stem)
             try:
                 acc = load_account(f, farm_defaults())
                 row.update(name=acc.name, role=acc.role,
@@ -377,26 +429,52 @@ def create_app(
                            adb_serial=acc.ldplayer.adb_serial)
             except ConfigError as exc:
                 row["error"] = str(exc)
+            health = watchdog.view(stem)
+            want = desired.get(stem)
+            op = locks.current(stem) or (fleet.status.op if fleet.busy() else None)
+            row.update(
+                instance=instances.get(stem),
+                op=op,
+                desired=want,
+                health=health,
+                phase=device_phase(
+                    op=op, running=bool(row.get("running")), instance=instances.get(stem),
+                    health=health, state=row.get("state") or {}, desired=want,
+                ),
+            )
             rows.append(row)
         return rows
 
+    def _want_running(stem: str) -> None:
+        # người bấm chạy = muốn chạy; quên lịch sử hỏng cũ của watchdog
+        desired.set(stem, "running")
+        watchdog.reset(stem)
+
     @app.post("/api/workers/{stem}/start")
     def start_worker(stem: str) -> dict[str, Any]:
+        _checked_stem(stem)
+        _want_running(stem)
         try:
-            pid = make_supervisor().start(_checked_stem(stem))
+            pid = run_locked(stem, "start", lambda: make_supervisor().start(stem))
         except OrchestratorError as exc:
             raise HTTPException(409, detail=str(exc)) from exc
         return {"status": "started", "stem": stem, "pid": pid}
 
     @app.post("/api/workers/{stem}/stop")
     def stop_worker(stem: str) -> dict[str, Any]:
-        make_supervisor().stop(_checked_stem(stem))
+        _checked_stem(stem)
+        # TRƯỚC khi dừng: watchdog không được hồi sinh máy người vừa bấm dừng
+        desired.set(stem, "stopped")
+        watchdog.reset(stem)
+        run_locked(stem, "stop", lambda: make_supervisor().stop(stem))
         return {"status": "stopped", "stem": stem}
 
     @app.post("/api/workers/{stem}/restart")
     def restart_worker(stem: str) -> dict[str, Any]:
+        _checked_stem(stem)
+        _want_running(stem)
         try:
-            pid = make_supervisor().restart(_checked_stem(stem))
+            pid = run_locked(stem, "restart", lambda: make_supervisor().restart(stem))
         except OrchestratorError as exc:
             raise HTTPException(409, detail=str(exc)) from exc
         return {"status": "restarted", "stem": stem, "pid": pid}
@@ -405,11 +483,96 @@ def create_app(
     def provision_worker(stem: str) -> dict[str, Any]:
         """Clone the template LDPlayer instance for this account and start it
         (Windows only: needs ``orchestrator.manage_instances`` + template index)."""
+        _checked_stem(stem)
+        _want_running(stem)
         try:
-            pid = make_supervisor().provision(_checked_stem(stem))
+            pid = run_locked(stem, "provision", lambda: make_supervisor().provision(stem))
         except OrchestratorError as exc:
             raise HTTPException(409, detail=str(exc)) from exc
         return {"status": "provisioned", "stem": stem, "pid": pid}
+
+    # -- toàn hệ thống: Chạy / Chạy lại / Dừng tất cả --------------------------------
+
+    def _fleet_stems() -> tuple[list[str], list[str]]:
+        """(farm accounts to start, every account to stop). Main is on-demand
+        (CLAUDE.md) — never started by "Chạy tất cả", but stopped by "Dừng"."""
+        farms: list[str] = []
+        every: list[str] = []
+        folder = accounts_dir()
+        for f in sorted(folder.glob("*.yaml")) if folder.is_dir() else []:
+            if f.name == EXAMPLE_NAME:
+                continue
+            every.append(f.stem)
+            try:
+                if load_account(f, farm_defaults()).role == "farm":
+                    farms.append(f.stem)
+            except ConfigError:
+                continue
+        return farms, every
+
+    @app.get("/api/system")
+    def system_status() -> dict[str, Any]:
+        return fleet.status.view()
+
+    @app.post("/api/system/{op}")
+    def system_op(op: str) -> dict[str, Any]:
+        ops: dict[str, SystemOp] = {
+            "start": "start_all", "stop": "stop_all", "restart": "restart_all",
+        }
+        if op not in ops:
+            raise HTTPException(404, detail=f"thao tac khong ho tro: {op!r}")
+        farms, every = _fleet_stems()
+        kind = ops[op]
+        total = {"start_all": len(farms), "stop_all": len(every),
+                 "restart_all": len(every) + len(farms)}[kind]
+        if not fleet.begin(kind, total):
+            raise HTTPException(409, detail="dang chay thao tac toan he thong, cho xong")
+        log.warning("system op requested", op=kind, farms=farms)
+        if background_ops:
+            threading.Thread(target=fleet.run, args=(kind, farms, every),
+                             name=f"fleet-{kind}", daemon=True).start()
+        else:
+            fleet.run(kind, farms, every)
+        return {"status": "accepted", "op": kind, "total": total}
+
+    def watchdog_tick() -> list[str]:
+        """One watchdog pass over every account; returns the actions taken.
+
+        Recovery actions run in their own thread holding the account's op
+        lock (a reboot takes minutes), so other accounts keep being watched.
+        """
+        if fleet.busy():
+            return []
+        taken: list[str] = []
+        sup = make_supervisor()
+        for stem in _fleet_stems()[1]:
+            st = sup.worker_status(stem)
+            action = watchdog.decide(
+                stem,
+                desired=desired.get(stem),
+                busy=locks.current(stem) is not None,
+                alive=bool(st.get("running")),
+                state=st.get("state") or {},
+            )
+            if action is None or locks.try_begin(stem, f"watchdog:{action.kind}") is not None:
+                continue
+            taken.append(f"{stem}:{action.kind}")
+
+            def _run(a: Any = action, s: str = stem) -> None:
+                try:
+                    watchdog.execute(a, make_supervisor())
+                except Exception as exc:
+                    log.error("watchdog action failed", stem=s, kind=a.kind, error=str(exc))
+                finally:
+                    locks.end(s)
+
+            if background_ops:
+                threading.Thread(target=_run, name=f"watchdog-{stem}", daemon=True).start()
+            else:
+                _run()
+        return taken
+
+    app.state.watchdog_tick = watchdog_tick
 
     # -- runner (tương thích GUI cũ — giờ chạy trên registry/supervisor) -----------
 
@@ -423,8 +586,9 @@ def create_app(
     @app.post("/api/runner/restart")
     def runner_restart(body: dict[str, Any]) -> dict[str, Any]:
         stem = _checked_stem(str(body.get("account", "")))
+        _want_running(stem)
         try:
-            pid = make_supervisor().restart(stem)
+            pid = run_locked(stem, "restart", lambda: make_supervisor().restart(stem))
         except OrchestratorError as exc:
             raise HTTPException(409, detail=str(exc)) from exc
         return {"status": "restarted", "pid": pid, "account": stem}
@@ -586,6 +750,22 @@ def create_app(
                 {"farm": sess.farm_stem, "paused": sess.paused} if sess is not None else None
             ),
         }
+
+    if start_coordinator and _orch.watchdog.enabled:
+
+        def _watch(interval: float) -> None:
+            while True:
+                try:
+                    acted = watchdog_tick()
+                    if acted:
+                        log.warning("watchdog acted", actions=acted)
+                except Exception as exc:  # vòng nền không bao giờ được chết im lặng
+                    log.error("watchdog tick crashed", error=str(exc))
+                time.sleep(interval)
+
+        threading.Thread(target=_watch, args=(_orch.watchdog.poll_interval,),
+                         name="fleet-watchdog", daemon=True).start()
+        log.info("fleet watchdog started", interval=_orch.watchdog.poll_interval)
 
     if start_coordinator:
         try:

@@ -328,3 +328,21 @@ def test_abort_returns_one_and_records_reason(tmp_path: Path) -> None:
     assert worker.run() == 1
     st = read_state(sf)
     assert st["status"] == "aborted" and st["reason"] == "boom"
+
+
+def test_status_writer_heartbeat_is_throttled(tmp_path: Path) -> None:
+    import json as _json
+
+    from vhtk.worker import StatusWriter
+
+    t = {"now": 100.0}
+    path = tmp_path / "x.state.json"
+    w = StatusWriter(path, "x", clock=lambda: t["now"])
+    w.beat()
+    assert _json.loads(path.read_text())["heartbeat_at"] == 100.0
+    t["now"] = 110.0
+    w.beat()  # chưa đủ 20s -> không ghi lại
+    assert _json.loads(path.read_text())["heartbeat_at"] == 100.0
+    t["now"] = 121.0
+    w.beat()
+    assert _json.loads(path.read_text())["heartbeat_at"] == 121.0

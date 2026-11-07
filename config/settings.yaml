@@ -49,7 +49,7 @@ ocr:
 safety:
   # Chế độ khô: BẬT mặc định — không thực hiện hành động không thể hoàn tác
   # (bán, mua, giao dịch), thay vào đó chụp màn + ghi log
-  dry_run: true # bật lại 2026-10-28 khi chuyển sang LDPlayer Windows (HOWTORUN bước 3.1)
+  dry_run: false # bật lại 2026-10-28 khi chuyển sang LDPlayer Windows (HOWTORUN bước 3.1)
   # Với bán đồ / chuyển vàng: gửi ảnh lên Telegram, chờ người xác nhận
   # (bật mặc định trong 5 phiên chạy đầu)
   confirm_mode: false # tắt cùng dry_run 27/10: notifier còn là Null (chưa nối Telegram) — bật lại khi có 5a
@@ -286,6 +286,22 @@ orchestrator:
   # Gom yêu cầu chuyển vàng: đợi tối đa N giây từ yêu cầu đầu tiên để nhiều
   # acc đạt ngưỡng đi chung MỘT lần mở main (0 = mở ngay khi có yêu cầu)
   main_batch_window_seconds: 300
+  # Tự phục hồi máy gặp lỗi (mất kết nối, kẹt, crash, treo) — chỉ với acc đang
+  # "muốn chạy" (bấm Chạy / Chạy tất cả; bấm Dừng là thôi can thiệp). Lỗi cần
+  # người (thiếu template, sai server, vượt giới hạn an toàn, túi đầy không bán
+  # được) KHÔNG tự chạy lại — thẻ máy báo đỏ "cần người xử lý"
+  watchdog:
+    enabled: true
+    # Chờ trước lần chạy lại thứ 1, 2, 3+ (giây); từ lần hỏng thứ 2 liên tiếp
+    # thì tắt/bật lại cả máy LDPlayer
+    backoff_seconds: [60, 180, 600]
+    # Quá N lần hỏng trong 1 giờ thì dừng hẳn, chờ người
+    max_restarts_per_hour: 5
+    # Worker còn sống nhưng không chụp màn hình quá N giây = treo -> chạy lại
+    hang_timeout: 300
+    # Chạy ổn liên tục N giây thì đếm lại số lần hỏng liên tiếp từ đầu
+    healthy_after: 600
+    poll_interval: 10
 
 # Chuyển vàng về acc main (W3/R4) — giao dịch trực tiếp 2 nhân vật đứng cạnh
 # nhau tại điểm hẹn cố định trong thành. Mọi bước mời/đặt tiền/khoá/xác nhận

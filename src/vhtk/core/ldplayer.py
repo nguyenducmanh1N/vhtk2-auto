@@ -140,6 +140,18 @@ class LDPlayerManager:
             instances.append(Instance(index=index, name=name, running=running, adb_serial=serial))
         return instances
 
+    def running_indices(self) -> set[int]:
+        """Indices whose Android is up — ONE ``list2`` call, no serial lookups
+        (GUI polls this every few seconds; :meth:`list_instances` would run an
+        adb query per running instance)."""
+        out = self._runner(["list2"])
+        running: set[int] = set()
+        for line in out.splitlines():
+            parsed = parse_list2_line(line.strip()) if line.strip() else None
+            if parsed is not None and parsed[2]:
+                running.add(parsed[0])
+        return running
+
     def is_running(self, index: int) -> bool:
         """Whether the instance's Android has started."""
         out = self._runner(["isrunning", "--index", str(index)])

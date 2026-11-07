@@ -271,6 +271,28 @@ class LoginSettings(_StrictModel):
     clear_chars: int = Field(gt=0)
 
 
+class WatchdogSettings(_StrictModel):
+    """Tự phục hồi worker hỏng (orchestrator, chạy nền trong GUI server).
+
+    Chỉ áp dụng cho acc đang ở trạng thái "muốn chạy" (bấm Chạy / Chạy tất cả);
+    bấm Dừng là watchdog thôi can thiệp. Lỗi cần người (thiếu template, sai
+    server, vượt giới hạn an toàn...) không bao giờ tự chạy lại.
+    """
+
+    enabled: bool = True
+    # Giãn cách trước lần chạy lại thứ 1, 2, 3+ (giây). Từ lần hỏng thứ 2 liên
+    # tiếp: tắt/bật lại cả instance LDPlayer chứ không chỉ worker
+    backoff_seconds: list[float] = Field(default=[60.0, 180.0, 600.0], min_length=1)
+    # Quá số lần hỏng này trong 1 giờ thì thôi, báo "cần người xử lý"
+    max_restarts_per_hour: int = Field(gt=0, default=5)
+    # Worker còn sống nhưng không chụp màn hình quá N giây = treo
+    hang_timeout: float = Field(gt=0, default=300.0)
+    # Chạy ổn liên tục N giây thì bộ đếm hỏng liên tiếp về 0
+    healthy_after: float = Field(gt=0, default=600.0)
+    # Chu kỳ kiểm tra (giây)
+    poll_interval: float = Field(gt=0, default=10.0)
+
+
 class OrchestratorSettings(_StrictModel):
     """Multi-instance orchestration (W2): worker processes + LDPlayer lifecycle.
 
@@ -306,6 +328,8 @@ class OrchestratorSettings(_StrictModel):
     # Gom yêu cầu chuyển vàng: đợi tối đa N giây kể từ yêu cầu đầu tiên để
     # nhiều acc đạt ngưỡng gần nhau đi chung MỘT lần mở main (0 = mở ngay)
     main_batch_window_seconds: float = Field(ge=0, default=300.0)
+    # Tự phục hồi worker hỏng/treo (mặc định đầy đủ — settings cũ vẫn load)
+    watchdog: WatchdogSettings = WatchdogSettings()
 
 
 Currency = Literal["vang", "bac", "dong"]
