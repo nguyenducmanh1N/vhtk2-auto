@@ -32,6 +32,7 @@ PATCHES: dict[str, Image] = {
     "common/btn_reconnect": make_patch(4),
     "login/title": make_patch(5),
     "common/dialog_bullet": make_patch(6),
+    "login/char_select_header": make_patch(7),
 }
 
 
@@ -147,6 +148,16 @@ def test_revive_button_is_tapped(tmp_path: Path) -> None:
 def test_login_screen_requests_relogin(tmp_path: Path) -> None:
     login = canvas_with(("login/title", 100, 50))
     recovery, device, _ = make_recovery(tmp_path, [login])
+
+    assert recovery.check() is RecoveryOutcome.RELOGIN
+    assert device.taps == []
+
+
+def test_character_select_screen_requests_relogin(tmp_path: Path) -> None:
+    """Worker dừng giữa lúc login để game đứng ở màn "Chọn nhân vật" — farm
+    chạy lại phải nhận ra mà login tiếp, không kẹt VERIFY_HUD tới ABORT."""
+    screen = canvas_with(("login/char_select_header", 300, 40))
+    recovery, device, _ = make_recovery(tmp_path, [screen])
 
     assert recovery.check() is RecoveryOutcome.RELOGIN
     assert device.taps == []

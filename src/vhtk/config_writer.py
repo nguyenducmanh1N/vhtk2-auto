@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from ruamel.yaml import YAML
-from ruamel.yaml.comments import CommentedMap
+from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
 from vhtk.config import (
     ACCOUNT_FARM_FIELDS,
@@ -52,10 +52,29 @@ def _load_round_trip(path: Path, *, allow_empty: bool = False) -> CommentedMap:
 def _apply(target: CommentedMap, values: dict[str, Any]) -> None:
     """Recursively copy ``values`` into ``target`` without touching comments."""
     for key, value in values.items():
-        if isinstance(value, dict) and isinstance(target.get(key), CommentedMap):
+        current = target.get(key)
+        if isinstance(value, dict) and isinstance(current, CommentedMap):
             _apply(target[key], value)
+        elif _update_seq_in_place(current, value):
+            pass
         else:
             target[key] = value
+
+
+def _update_seq_in_place(current: Any, value: Any) -> bool:
+    """Overwrite a same-length YAML list element by element.
+
+    ruamel gắn chú thích của KHOÁ KẾ TIẾP vào phần tử cuối của list đứng
+    trước (vd ``spot: [0, 0]`` rồi ``# HP dưới ngưỡng...``) — thay cả list là
+    mất chú thích đó và mất luôn kiểu ``[x, y]``. Sửa từng phần tử thì giữ.
+    """
+    if not (isinstance(current, CommentedSeq) and isinstance(value, list)):
+        return False
+    if len(current) != len(value) or any(isinstance(v, (dict, list)) for v in value):
+        return False
+    for i, v in enumerate(value):
+        current[i] = v
+    return True
 
 
 def _dump(data: CommentedMap, path: Path) -> None:
@@ -215,8 +234,9 @@ def _apply_split(
                 value,
             )
         elif local is not None and key in local:
-            local[key] = value
-        else:
+            if not _update_seq_in_place(local_child, value):
+                local[key] = value
+        elif not _update_seq_in_place(base.get(key), value):
             base[key] = value
 
 

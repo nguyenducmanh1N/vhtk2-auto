@@ -693,6 +693,7 @@ class Navigator:
         deadline = time.monotonic() + self.cfg.travel_timeout
         stable = 0
         title_misses = 0
+        moved = False  # toạ độ có đổi lần nào trong lượt chờ này không
         prev: Image | None = None
         while time.monotonic() < deadline:
             self.ctx.safety.check_kill_switch()
@@ -701,12 +702,19 @@ class Navigator:
             if prev is not None and self._frame_diff(prev, crop) <= self.cfg.arrive_diff_threshold:
                 stable += 1
             else:
+                moved = moved or prev is not None
                 stable = 0
             prev = crop
             still_travelling = check_indicator and (
                 self.ctx.vision.find(TPL_TRAVEL_INDICATOR, screenshot=frame) is not None
             )
-            if stable >= self.cfg.arrive_stable_cycles and not still_travelling:
+            # dòng "Đi: ..." nằm trong KHUNG CHAT — nhân vật đứng im rồi nó vẫn
+            # còn trong lịch sử chat (kẹt 3x600s ở Tương Dương 07/11). Toạ độ
+            # đứng yên đủ travel_stall_cycles thì thôi tin chỉ báo đó
+            stale_indicator = still_travelling and stable >= self.cfg.travel_stall_cycles
+            if stable >= self.cfg.arrive_stable_cycles and (
+                not still_travelling or stale_indicator
+            ):
                 here = self.in_map(map_name, frame=frame)
                 if here is None:
                     # không có template HUD — xác minh đắt (mở/đóng bản đồ)
@@ -721,14 +729,18 @@ class Navigator:
                         if title_misses >= 2:
                             raise TravelStalled(
                                 f"character stopped outside {map_name!r} "
-                                "(map title mismatch twice)"
+                                "(map title mismatch twice)",
+                                moved=moved,
                             )
                 if here:
                     log.info("arrived", map=map_name)
                     return
                 if stable >= self.cfg.travel_stall_cycles:
                     raise TravelStalled(
-                        f"character stopped outside {map_name!r} with no travel indicator"
+                        f"character stopped outside {map_name!r} "
+                        + ("(travel indicator stale)" if stale_indicator
+                           else "with no travel indicator"),
+                        moved=moved,
                     )
             time.sleep(self.cfg.arrive_check_interval)
         raise StateTimeout(f"did not arrive in {map_name!r} within {self.cfg.travel_timeout}s")

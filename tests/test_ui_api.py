@@ -595,3 +595,19 @@ def test_accounts_template_defaults_to_shared(client: TestClient) -> None:
     t = client.get("/api/accounts-template").json()
     assert t["farm_overrides"] == []
     assert t["farm_defaults"] is not None
+
+
+def test_writing_spot_lists_keeps_next_key_comment(workspace: Path) -> None:
+    """ruamel gắn chú thích của khoá kế tiếp vào list đứng trước — ghi đè
+    spot/retreat_spot không được làm mất chú thích đó (mất thật 07/11)."""
+    sp = workspace / "settings.yaml"
+    write_settings_account_defaults(sp, default_farm())
+    write_settings_account_defaults(
+        sp, default_farm().model_copy(update={"spot": (1, 2), "retreat_spot": (3, 4)})
+    )
+    text = sp.read_text(encoding="utf-8")
+    assert "# HP dưới ngưỡng này (%) nhiều chu kỳ liền -> rút về nghỉ" in text
+    assert "# Vượt ngưỡng vàng này thì chuyển về acc main" in text
+    assert "spot: [1, 2]" in text and "retreat_spot: [3, 4]" in text
+    farm = load_settings(sp).account_defaults.farm  # type: ignore[union-attr]
+    assert farm.spot == (1, 2) and farm.retreat_spot == (3, 4)

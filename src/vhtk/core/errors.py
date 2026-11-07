@@ -63,7 +63,15 @@ class TravelStalled(TaskError):
     Quan sát AVD 26/10: game tìm đường tới cổng map (vd 197/175 cổng bắc
     Tuyền Châu) rồi thỉnh thoảng dừng hẳn thay vì vượt sang map bên. Task
     bắt lỗi này để điều hướng lại thay vì chờ hết travel_timeout.
+
+    ``moved`` = toạ độ HUD có đổi trong lượt chờ này (đã tiến được một đoạn,
+    vd vượt cổng) — caller dùng để phân biệt "kẹt ở cổng sau khi đi" với
+    "đứng im tại chỗ" (07/11: chỉ báo "Đi:" cũ trong chat làm lặp vô hạn).
     """
+
+    def __init__(self, message: str, moved: bool = False) -> None:
+        super().__init__(message)
+        self.moved = moved
 
 
 class TaskDefinitionError(VhtkError):

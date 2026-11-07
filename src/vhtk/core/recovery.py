@@ -65,6 +65,9 @@ LOGIN_MARKERS: tuple[str, ...] = (
     # form "SIGN IN WITH 3CID" — phiên SDK mất là rơi về đây giữa chừng;
     # login task biết điền form này (có credentials trong config)
     "login/signin_title",
+    # màn "Chọn nhân vật" — worker bị dừng giữa lúc login để game đứng ở đây;
+    # farm không nhận ra thì kẹt VERIFY_HUD tới ABORT (AVD 07/11)
+    "login/char_select_header",
 )
 POPUP_CLOSE_BUTTONS: tuple[str, ...] = (
     "common/btn_close",

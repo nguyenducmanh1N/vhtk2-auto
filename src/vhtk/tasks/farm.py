@@ -440,16 +440,19 @@ class FarmTask(BaseTask):
                 self._nav.unstick_via_npc(cfg.unstick_npc_row, cfg.unstick_walk_seconds)
             log.warning("travel did not start, redoing navigation", attempt=self._nav_attempts)
             return S_OPEN_MAP
-        self._nav_attempts = 0
+        # KHÔNG reset bộ đếm ở đây: travel_started có thể "thành công" giả vì
+        # dòng "Đi:" cũ trong chat — chỉ reset khi tới nơi / đã tiến được
         return S_TRAVEL
 
     def _travel_wait(self) -> str:
         try:
             self._nav.wait_arrival(self._farm.map)
-        except TravelStalled:
+        except TravelStalled as exc:
             # game dừng ở cổng map thay vì vượt sang — tap lại điểm đến từ
             # chỗ đang đứng (gần đích hơn) thay vì chờ hết travel_timeout
-            self._nav_attempts += 1
+            # đã tiến được một đoạn (vượt cổng) thì tính là lần kẹt MỚI; đứng
+            # im tại chỗ thì cộng dồn tới nav_retries rồi bỏ cuộc
+            self._nav_attempts = 1 if exc.moved else self._nav_attempts + 1
             if self._nav_attempts > self.ctx.settings.farm.nav_retries:
                 log.error("travel keeps stalling, giving up", attempts=self._nav_attempts)
                 return ABORT

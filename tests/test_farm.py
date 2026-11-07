@@ -786,6 +786,67 @@ def test_wait_arrival_stalled_when_wrong_map(tmp_path: Path) -> None:
         nav.wait_arrival(FARM_MAP)
 
 
+def test_wait_arrival_stale_chat_indicator_still_stalls(tmp_path: Path) -> None:
+    """Dòng "Đi: ..." còn trong lịch sử chat dù nhân vật đứng im (kẹt ở
+    Tương Dương 07/11) — toạ độ bất động đủ travel_stall_cycles là KẸT, không
+    chờ hết travel_timeout."""
+    vision = WorldVision(present={TPL_TRAVEL_INDICATOR})  # chỉ báo không bao giờ tắt
+    nav = nav_for(tmp_path, vision, WorldDevice())
+    with pytest.raises(TravelStalled, match="indicator stale"):
+        nav.wait_arrival(FARM_MAP)
+
+
+def test_wait_arrival_stall_reports_whether_character_moved(tmp_path: Path) -> None:
+    vision = WorldVision(present=set())  # khung bất động từ đầu
+    nav = nav_for(tmp_path, vision, WorldDevice())
+    with pytest.raises(TravelStalled) as still:
+        nav.wait_arrival(FARM_MAP)
+    assert still.value.moved is False
+
+    # vài khung đầu toạ độ đổi (đang đi), sau đó đứng im ngoài map đích
+    coords = load_coordinates(REPO_ROOT / "config" / "coordinates.yaml").farm
+    cx, cy, cw, ch = coords.hud_coords_rect
+    moved = vision.frame.copy()
+    moved[cy : cy + ch, cx : cx + cw] ^= 255
+    vision.frames = [vision.frame, moved]
+    with pytest.raises(TravelStalled) as after_move:
+        nav.wait_arrival(FARM_MAP)
+    assert after_move.value.moved is True
+
+
+@pytest.mark.parametrize("task_cls", [FarmTask, RetreatTask])
+def test_travel_stall_counter_not_reset_without_progress(tmp_path: Path, task_cls: type) -> None:
+    """Kẹt tại chỗ lặp lại phải cộng dồn tới nav_retries rồi ABORT — trước
+    đây travel_started "thành công" giả (dòng "Đi:" cũ trong chat) reset bộ
+    đếm nên lặp vô hạn tới khi game crash (AVD 07/11)."""
+    task = task_cls(make_ctx(tmp_path, WorldVision(present=set()), WorldDevice()))
+    retries = task.ctx.settings.farm.nav_retries
+
+    def stalled(_map: str) -> None:
+        raise TravelStalled("stuck", moved=False)
+
+    task._nav.wait_arrival = stalled  # type: ignore[method-assign]
+    results = [task._travel_wait() for _ in range(retries + 1)]
+    assert results[-1] == "ABORT"
+    assert "ABORT" not in results[:-1]
+
+    # đã tiến được một đoạn (vượt cổng) rồi mới kẹt -> đếm lại từ 1
+    def stalled_after_progress(_map: str) -> None:
+        raise TravelStalled("stuck at gate", moved=True)
+
+    task._nav_attempts = retries
+    task._nav.wait_arrival = stalled_after_progress  # type: ignore[method-assign]
+    assert task._travel_wait() != "ABORT"
+    assert task._nav_attempts == 1
+
+
+def test_wait_arrival_stale_chat_indicator_but_arrived(tmp_path: Path) -> None:
+    """Đã tới map đích nhưng dòng "Đi:" cũ vẫn nằm trong chat -> vẫn nhận là tới."""
+    vision = WorldVision(present={TPL_TRAVEL_INDICATOR, "map/hud_name_long_tuyen_thon"})
+    nav = nav_for(tmp_path, vision, WorldDevice())
+    nav.wait_arrival(FARM_MAP)
+
+
 # ---------------------------------------------------------------------------
 # FarmTask
 # ---------------------------------------------------------------------------
