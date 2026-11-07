@@ -67,6 +67,8 @@ sell:
     pitch: [57, 56]
     cols: 5
     rows: 6
+  # Vùng góc dưới phải của ô vật phẩm, nơi game hiển thị số lượng dạng x1/x15
+  quantity_badge_rect: [34, 30, 16, 18]
   # Vùng hiển thị tiền (vàng/bạc/đồng) dưới túi — so trước/sau khi bán
   money_rect: [620, 426, 210, 22]
   # Ô SỐ từng loại tiền trên dòng đó (OCR) — đo trên ảnh AVD 2026-11-03:

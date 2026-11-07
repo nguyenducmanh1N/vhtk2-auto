@@ -96,12 +96,14 @@ class SellSettings(_StrictModel):
     """
 
     quality_blacklist_threshold: int = Field(ge=0)
-    # Danh sách tên item cấm bán — dùng khi có OCR (Windows); trên Mac lớp
-    # bảo vệ chính là WHITELIST icon bên dưới
+    # Danh sách dành cho bộ lọc tên qua OCR; hiện chưa được áp dụng trong sell flow
     item_blacklist: list[str]
-    # WHITELIST: chỉ bán ô khớp một template icon ``sell/ok_*`` — đồ lạ,
-    # đồ mới, đồ chưa có template thì KHÔNG BAO GIỜ bán
-    icon_match_threshold: float = Field(ge=0.0, le=1.0)
+    quantity_label_min_brightness: int = Field(ge=0, le=255)
+    quantity_label_max_saturation: int = Field(ge=0, le=255)
+    quantity_label_min_components: int = Field(gt=0)
+    quantity_label_min_component_area: int = Field(gt=0)
+    quantity_label_min_component_width: int = Field(gt=0)
+    quantity_label_min_component_height: int = Field(gt=0)
     # Màu nền ô "bán được" game tô trong chế độ Bán + tỉ lệ pixel tối thiểu
     highlight: HSVRange
     highlight_min_fraction: float = Field(ge=0.0, le=1.0)
@@ -572,6 +574,8 @@ class SellCoordinates(_StrictModel):
     """Fixed UI geometry of the sell flow (bag grid, money row, page tabs)."""
 
     bag_grid: BagGrid
+    # Vùng nhãn số lượng, tương đối với góc trái-trên mỗi ô vật phẩm
+    quantity_badge_rect: tuple[int, int, int, int]
     # Vùng hiển thị tiền (vàng/bạc/đồng) dưới túi — so trước/sau khi bán
     money_rect: tuple[int, int, int, int]
     # Ô SỐ của từng loại tiền trên dòng đó (OCR đọc số) — None = chưa đo,
@@ -579,6 +583,14 @@ class SellCoordinates(_StrictModel):
     money_cells: MoneyCells | None = None
     # Nút chuyển trang túi (1, 2, 3) bên phải lưới
     page_buttons: list[tuple[int, int]]
+
+    @model_validator(mode="after")
+    def _quantity_badge_inside_cell(self) -> SellCoordinates:
+        x, y, w, h = self.quantity_badge_rect
+        cell_w, cell_h = self.bag_grid.cell
+        if x < 0 or y < 0 or w <= 0 or h <= 0 or x + w > cell_w or y + h > cell_h:
+            raise ValueError("quantity_badge_rect must fit inside one bag_grid cell")
+        return self
 
 
 class MoneyCells(_StrictModel):

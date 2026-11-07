@@ -135,9 +135,9 @@ lại nhanh trên LDPlayer với template `v1.0` (code không đổi).
 
 - **States:** `USE_TOWN_SCROLL → FIND_NPC → OPEN_SHOP → SCAN_BAG → SELL_ITEMS →
   VERIFY_GOLD → RETURN_TO_FARM` (nối lại R3 từ `OPEN_MAP`).
-- Quyết định bán qua **blacklist 2 tầng độc lập** (quy tắc #4 CLAUDE.md): tầng 1 loại
-  item (đồ đang mặc, thuốc, phù, quest); tầng 2 ngưỡng phẩm chất từ `detect_quality`.
-  Cả 2 PASS mới được đưa vào `guard_irreversible`. **Item giá trị cao không bán** sẽ
+- Chỉ xét ô được game tô đánh dấu bán được và **không có nhãn số lượng** (kể cả `x1`);
+  sau đó chặn phẩm chất từ `detect_quality`. Cả hai điều kiện phải qua trước khi gọi
+  `guard_irreversible`; đồ đang mặc không nằm trong túi bán. **Item giá trị cao không bán** sẽ
   được giữ trong túi — sau này W3 chuyển về main qua giao dịch.
 - **Test (trọng tâm nhất GĐ 4):** bảng quyết định bán/không bán đủ tổ hợp loại × phẩm
   chất; 2 tầng độc lập; đếm số item bán khớp log.

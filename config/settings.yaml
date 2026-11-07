@@ -75,20 +75,25 @@ safety:
 
 # Task bán đồ (R3b). PHÁT HIỆN QUAN TRỌNG trên AVD: trong chế độ Bán của shop,
 # TAP LÀ BÁN NGAY — game không hỏi xác nhận. Mọi lớp bảo vệ nằm ở tool:
-# dry_run -> confirm_mode -> WHITELIST icon -> ngưỡng phẩm chất -> guard từng item.
+# dry_run -> confirm_mode -> số lượng + game đánh dấu bán được -> ngưỡng phẩm chất -> guard từng item.
 sell:
   # Ngưỡng phẩm chất: item có phẩm chất >= ngưỡng này KHÔNG bao giờ bán
   # (0=trắng, 1=lục, 2=lam, 3=tím, 4=cam)
   quality_blacklist_threshold: 2
-  # Danh sách tên item không bao giờ bán (khớp OCR tên — dùng trên Windows;
-  # trên Mac lớp bảo vệ chính là whitelist icon bên dưới)
+  # Danh sách tên dự kiến dùng khi bộ lọc OCR item được triển khai.
+  # Hiện sell flow giữ ô có nhãn số lượng và dùng bộ lọc phẩm chất bên dưới.
   item_blacklist:
     - "Phù về thành"
     - "Thuốc hồi sinh lực"
     - "Thuốc hồi nội lực"
-  # WHITELIST: chỉ bán ô khớp template icon sell/ok_* với điểm >= ngưỡng này;
-  # đồ lạ/mới/chưa có template thì KHÔNG BAO GIỜ bán
-  icon_match_threshold: 0.85
+  # Nhận diện nhãn số lượng ở góc ô; chữ số sáng, ít bão hòa, gồm ít nhất
+  # N thành phần ký tự đủ kích thước. Đo từ ảnh shop LDPlayer 960x540.
+  quantity_label_min_brightness: 190
+  quantity_label_max_saturation: 110
+  quantity_label_min_components: 2
+  quantity_label_min_component_area: 5
+  quantity_label_min_component_width: 2
+  quantity_label_min_component_height: 3
   # Màu nền vàng-xanh game tô lên ô "bán được" trong chế độ Bán (đo AVD)
   highlight: {h: [25, 45], s: [60, 255], v: [80, 220]}
   # Tỉ lệ pixel nền tối thiểu khớp màu trên để coi ô là "bán được"

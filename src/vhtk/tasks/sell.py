@@ -13,11 +13,10 @@ stacked (rule #4 of CLAUDE.md):
 
 1. ``dry_run`` (default ON) — scan and log "would sell", never tap.
 2. ``confirm_mode`` — a human approves via notifier; no notifier = refusal.
-3. **WHITELIST**: a cell is sellable only if its icon matches one of the
-   ``sell/ok_*`` templates — unknown/new items are NEVER sold. (Chosen over
-   a blacklist on 2026-10-26: safer when the game drops unseen items.)
-4. Quality gate: border color >= ``quality_blacklist_threshold`` blocks.
-5. ``guard_irreversible`` per item — session cap catches tap loops.
+3. Keep every item cell with a visible quantity label (including ``x1``).
+4. Only consider cells highlighted as sellable by the game.
+5. Quality gate: border color >= ``quality_blacklist_threshold`` blocks.
+6. ``guard_irreversible`` per item — session cap catches tap loops.
 
 The worker calls this task only after a ``BAG_FULL`` signal from farm —
 never as a side trip of an HP retreat (changed 2026-11-06 so the rest step
@@ -29,7 +28,6 @@ from __future__ import annotations
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import cast
 
 import cv2
 import structlog
@@ -57,8 +55,6 @@ TPL_BTN_SELL_MODE = "shop/btn_ban"  # nút "Bán" trong shop
 TPL_BTN_CLOSE_SHOP = "shop/btn_close_shop"  # nút X của khung Cửa hiệu
 TPL_NPC_TALK = "shop/npc_talk_icon"  # icon 💬 trên bảng mục tiêu NPC
 TPL_NPC_ROW = "shop/row_chu_tap_hoa"  # dòng "Chủ Tạp hóa" trong tab Tìm NPC
-WHITELIST_PREFIX = "sell/ok_"  # icon đồ RÁC được phép bán
-
 S_VERIFY_HUD = "VERIFY_HUD"
 S_GO_TO_NPC = "GO_TO_NPC"
 S_OPEN_SHOP = "OPEN_SHOP"
@@ -73,7 +69,7 @@ class SellReport:
 
     sold: int = 0
     would_sell: int = 0  # dry_run / confirm bị từ chối
-    skipped_unknown: int = 0  # không khớp whitelist -> giữ lại
+    skipped_numbered: int = 0  # có nhãn số lượng -> giữ lại
     skipped_quality: int = 0  # phẩm chất >= ngưỡng -> giữ lại
     details: list[str] = field(default_factory=list)
     # tiền đọc được lúc túi đang mở (SAU khi bán) — worker dùng cho ngưỡng
@@ -101,27 +97,38 @@ def cell_highlight_fraction(cell: Image, cfg: SellSettings) -> float:
     return float(mask.mean())
 
 
-def best_whitelist_match(
-    cell_gray: Image, whitelist: dict[str, Image], threshold: float
-) -> str | None:
-    """Name of the best-matching ``sell/ok_*`` icon, or ``None`` (don't sell).
-
-    Pure function — the heart of the safety decision, unit-tested offline.
-    """
-    best_name: str | None = None
-    best_score = threshold
-    for name, icon in whitelist.items():
-        ih, iw = icon.shape[:2]
-        if ih > cell_gray.shape[0] or iw > cell_gray.shape[1]:
-            continue
-        score = float(cv2.matchTemplate(cell_gray, icon, cv2.TM_CCOEFF_NORMED).max())
-        if score >= best_score:
-            best_name, best_score = name, score
-    return best_name
+def has_quantity_label(
+    cell: Image,
+    rect: tuple[int, int, int, int],
+    cfg: SellSettings,
+) -> bool:
+    """Conservatively detect a quantity label in the configured cell corner."""
+    x, y, width, height = rect
+    badge = cell[y : y + height, x : x + width]
+    if badge.shape[:2] != (height, width):
+        return True
+    hsv = cv2.cvtColor(badge, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(
+        hsv,
+        (0, 0, cfg.quantity_label_min_brightness),
+        (179, cfg.quantity_label_max_saturation, 255),
+    )
+    count, _, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    glyphs = 0
+    for _, _, component_width, component_height, area in stats[1:count]:
+        if (
+            area >= cfg.quantity_label_min_component_area
+            and component_width >= cfg.quantity_label_min_component_width
+            and component_height >= cfg.quantity_label_min_component_height
+        ):
+            glyphs += 1
+            if glyphs >= cfg.quantity_label_min_components:
+                return True
+    return False
 
 
 class SellTask(BaseTask):
-    """Sell whitelisted junk to the NPC grocer; report in :attr:`report`."""
+    """Sell eligible unnumbered items to the NPC grocer; report in :attr:`report`."""
 
     name = "sell"
 
@@ -167,12 +174,10 @@ class SellTask(BaseTask):
             TPL_TAB_FIND_NPC_ON,
             TPL_TAB_FIND_NPC_OFF,
         )
-        whitelist = self._whitelist_names()
-        if missing or not whitelist:
+        if missing:
             log.error(
                 "sell templates missing — capture them with tools/capture.py",
                 missing=missing,
-                whitelist_count=len(whitelist),
             )
             return ABORT
         # lớp phủ (shop, bản đồ) xét TRƯỚC HUD: nhãn "Ngồi" góc trái dưới vẫn
@@ -225,7 +230,6 @@ class SellTask(BaseTask):
     def _sell_scan(self) -> str:
         """One pass over the bag grid; every protection applies per cell."""
         cfg = self.ctx.settings.sell
-        whitelist = self._load_whitelist()
         money_before = self._money_crop()
         for page in range(cfg.max_pages):
             if page > 0:
@@ -233,7 +237,7 @@ class SellTask(BaseTask):
                 log.warning("using fallback coordinates", target=f"bag_page_{page + 1}", xy=xy)
                 self.ctx.device.tap(*xy)
                 time.sleep(1.0)
-            self._scan_page(page, whitelist)
+            self._scan_page(page)
         self._verify_money_changed(money_before)
         # túi đang mở sẵn — đọc tiền cho ngưỡng chuyển vàng (W3), không tốn thao tác
         if self._money.available:
@@ -242,7 +246,7 @@ class SellTask(BaseTask):
             "sell pass done",
             sold=self.report.sold,
             would_sell=self.report.would_sell,
-            kept_unknown=self.report.skipped_unknown,
+            kept_numbered=self.report.skipped_numbered,
             kept_quality=self.report.skipped_quality,
             money=self.report.money.as_dict(),
         )
@@ -259,7 +263,7 @@ class SellTask(BaseTask):
 
     # -- internals ---------------------------------------------------------------
 
-    def _scan_page(self, page: int, whitelist: dict[str, Image]) -> None:
+    def _scan_page(self, page: int) -> None:
         cfg = self.ctx.settings.sell
         grid = self._sc.bag_grid
         frame = self.ctx.vision.capture_screen()
@@ -273,11 +277,9 @@ class SellTask(BaseTask):
                 # chỉ xét ô game TÔ MÀU "bán được" trong chế độ Bán
                 if cell_highlight_fraction(cell, cfg) < cfg.highlight_min_fraction:
                     continue
-                gray = cast(Image, cv2.cvtColor(cell, cv2.COLOR_BGR2GRAY))
-                name = best_whitelist_match(gray, whitelist, cfg.icon_match_threshold)
                 detail = f"page{page + 1} cell({row},{col})"
-                if name is None:
-                    self.report.skipped_unknown += 1
+                if has_quantity_label(cell, self._sc.quantity_badge_rect, cfg):
+                    self.report.skipped_numbered += 1
                     continue
                 quality = detect_quality(cell, self.ctx.settings.quality)
                 if quality is not None and self._quality_index(quality) >= (
@@ -286,7 +288,6 @@ class SellTask(BaseTask):
                     self.report.skipped_quality += 1
                     log.info("kept item: quality above threshold", cell=detail, quality=quality)
                     continue
-                detail = f"{name} {detail}"
                 if not self.ctx.safety.guard_irreversible("sell", detail, frame):
                     self.report.would_sell += 1
                     self.report.details.append(f"WOULD SELL {detail}")
@@ -297,12 +298,6 @@ class SellTask(BaseTask):
                 time.sleep(cfg.tap_settle_seconds)
                 # chụp lại sau mỗi lần bán — lưới đã thay đổi
                 frame = self.ctx.vision.capture_screen()
-
-    def _whitelist_names(self) -> list[str]:
-        return [n for n in self.ctx.vision.store.names if n.startswith(WHITELIST_PREFIX)]
-
-    def _load_whitelist(self) -> dict[str, Image]:
-        return {n: self.ctx.vision.store.get(n).gray for n in self._whitelist_names()}
 
     def _quality_index(self, quality: str) -> int:
         """Position of a quality name in the configured ladder (0=trắng...)."""

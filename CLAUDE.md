@@ -169,8 +169,10 @@ Trước khi vào bất kỳ state nào, gọi `recovery.check()`:
 
 Đây là ưu tiên cao hơn cả việc tool chạy được:
 
-- **Blacklist bán đồ:** không bao giờ bán item đang trang bị, thuốc, phù về thành,
-  hoặc item có phẩm chất trên ngưỡng cấu hình. Blacklist kiểm tra ở 2 tầng độc lập.
+- **Bảo vệ bán đồ:** chỉ xét ô game đánh dấu bán được; giữ mọi ô có nhãn số lượng
+  (kể cả `x1`); và không bán item có phẩm chất từ ngưỡng cấu hình trở lên.
+  Trang bị đang mặc không nằm trong túi; thuốc/phù dạng có số lượng được giữ lại.
+  Bộ lọc blacklist theo tên OCR chưa được nối vào sell flow.
 - **Chế độ `dry_run`:** mặc định BẬT. Ở chế độ này tool làm mọi thứ trừ các hành động
   không thể hoàn tác (bán, mua, giao dịch) — thay vào đó chụp màn và ghi log.
 - **Chế độ `confirm_mode`:** với bán đồ và chuyển vàng, gửi ảnh lên Telegram và chờ

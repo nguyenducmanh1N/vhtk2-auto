@@ -47,7 +47,7 @@ class FakeSell(FakeTask):
     class _Report:
         sold = 0
         would_sell = 0
-        skipped_unknown = 0
+        skipped_numbered = 0
         skipped_quality = 0
         money = Money()
 
