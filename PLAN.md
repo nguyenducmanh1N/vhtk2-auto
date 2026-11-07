@@ -38,6 +38,7 @@ trước đạt đủ. Sau mỗi giai đoạn xong: cập nhật `PROGRESS.md`, 
 | D1 | App desktop — quản lý tài khoản & cấu hình (CRUD trên YAML) | Mac | 3 | ⬜ |
 | W1 | Dựng server Win: LDPlayer, smoke, template `v1.0` | Win | 5b | ⬜ |
 | W2 | Orchestrator đa instance (ldconsole, scheduler, main on-demand) + API điều khiển | Win | W1 | ⬜ |
+| D1b | App desktop — cài đặt chung: farm mặc định cho mọi acc + ghi đè riêng, thông số farm, chiêu, an toàn trên một trang | Mac | D1 | ✅ |
 | D2 | App desktop — quản lý thiết bị: gán acc ↔ instance, mở máy tự login | Win | W2, D1 | ⬜ |
 | D3 | App desktop — dashboard giám sát: trạng thái worker, log, ảnh màn, kill-switch, duyệt confirm | Win | D2 | ⬜ |
 | W3 | R4 Gold/item transfer — giao dịch 2 nhân vật đứng cạnh nhau | Win | W2 | ⬜ |
@@ -236,6 +237,34 @@ thì tự mở bind + đặt token trong settings). Giao diện đặt tại `sr
   (dùng `ruamel.yaml` để giữ comment); validate chặn giá trị sai.
 - **DoD:** ✅ tạo acc mới hoàn chỉnh chỉ bằng UI, file YAML sinh ra pass
   `load_account` · ✅ sửa ngưỡng vàng qua UI → task đọc được giá trị mới ở lần chạy kế.
+
+### D1b — Cài đặt chung + ghi đè riêng (bổ sung 2026-11-07, ĐÃ XONG trên Mac)
+
+**Vấn đề:** mỗi lần đổi ngưỡng HP/map farm/điểm rút về phải sửa từng file acc.
+
+**Thiết kế đã chốt (mặc định chung + ghi đè riêng, không "áp dụng hàng loạt"):**
+- `settings.yaml` thêm `account_defaults.farm` (đủ mọi trường của `AccountFarm`).
+  File `accounts/<acc>.yaml` mục `farm:` chỉ ghi trường muốn KHÁC
+  (`AccountFarmOverride`, mọi trường tuỳ chọn, vẫn `extra=forbid`).
+- `load_account(path, defaults)` gộp defaults ← override rồi mới validate, nên
+  ràng buộc chéo (resume > retreat) kiểm tra trên giá trị cuối. Không có
+  `account_defaults` (settings cũ) thì file acc phải ghi đủ như trước.
+- `write_account(..., farm_overrides=...)` chỉ ghi trường riêng, XOÁ trường
+  dùng chung khỏi file; orchestrator khi ghi lại index/serial giữ nguyên tập
+  trường riêng của file (không biến giá trị chung đã gộp thành riêng).
+- API: `GET/PUT /api/settings/account-defaults` (từ chối + nêu tên acc nếu
+  mặc định mới làm acc nào vỡ ràng buộc), `GET/PUT /api/settings/farm`
+  (trừ `skills`), `/api/accounts/{stem}` trả `farm_overrides` + `farm_defaults`.
+- GUI: tab **Cài đặt chung** gồm 4 khối lưu riêng (An toàn · Farm mặc định ·
+  Thông số farm · Chiêu thức); tab An toàn và Chiêu cũ bỏ. Tab Tài khoản mục
+  Farm: mỗi ô có ô tích **"riêng"** — bỏ tích là ô khoá lại, hiện giá trị chung.
+- **Test:** gộp/ghi đè/legacy/khoá lạ/ràng buộc sau gộp (`test_config`);
+  writer xoá khoá + giữ comment, defaults, farm-trừ-skills; API overrides,
+  propagation, từ chối defaults hỏng acc (`test_ui_api`). Kiểm tra GUI bằng
+  trình duyệt trên Mac.
+- **DoD:** ✅ đổi ngưỡng ở Cài đặt chung → acc không tích "riêng" thấy giá trị
+  mới · ✅ bỏ tích "riêng" rồi lưu → trường biến mất khỏi file acc · ✅ file acc
+  cũ ghi đủ vẫn chạy (mọi ô hiện "riêng").
 
 ### D2 — Quản lý thiết bị (cần W2 vì phụ thuộc ldconsole + orchestrator API)
 

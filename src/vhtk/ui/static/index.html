@@ -119,6 +119,26 @@
   .savebar .msg.ok { color: var(--jade); }
   .savebar .msg.err { color: var(--red); white-space: pre-line; }
 
+  /* ---- ô "riêng" (ghi đè cài đặt chung) trên form tài khoản ---- */
+  .row > .fld { flex: 1; position: relative; }
+  .fld > label { margin-bottom: 10px; }
+  .fld.has-ovr > label > span:first-child { padding-right: 64px; }  /* chừa chỗ cho ô "riêng" */
+  .fld .ovr {
+    position: absolute; right: 0; top: 0; display: flex; gap: 5px; align-items: center;
+    font-size: 12px; color: var(--ink-dim); cursor: pointer;
+  }
+  .fld .ovr input { width: auto; margin: 0; accent-color: var(--gold); }
+  .fld.shared input, .fld.shared select, .fld.shared .btn { opacity: .5; }
+  /* ---- trang Cài đặt chung: nhiều khối, mỗi khối một nút lưu ---- */
+  .sec { margin-bottom: 30px; }
+  .sec h3 { margin: 0 0 10px; font-size: 16px; font-weight: 600; color: var(--gold); }
+  .sec-save { display: flex; gap: 10px; align-items: center; margin-top: -6px; }
+  .sec-save .msg { flex: 1; font-size: 13px; color: var(--ink-dim); }
+  .sec-save .msg.ok { color: var(--jade); }
+  .sec-save .msg.err { color: var(--red); white-space: pre-line; }
+  details.adv { margin: 4px 0 12px; }
+  details.adv summary { cursor: pointer; color: var(--ink-dim); font-size: 13px; margin-bottom: 10px; }
+
   /* ---- dải trạng thái bảo vệ (điểm nhấn duy nhất) ---- */
   .seal {
     border-radius: 10px; padding: 16px 18px; margin-bottom: 20px;
@@ -164,13 +184,12 @@
   <aside class="rail">
     <div class="brand">
       <h1>VHTK2 <b>Quản Lý</b></h1>
-      <p>Cấu hình tài khoản &amp; an toàn</p>
+      <p>Tài khoản · thiết bị · cài đặt chung</p>
     </div>
     <nav class="tabs">
       <button id="tabAcc" class="on">Tài khoản</button>
       <button id="tabDev">Thiết bị</button>
-      <button id="tabSkill">Chiêu</button>
-      <button id="tabSafe">An toàn</button>
+      <button id="tabSettings">Cài đặt chung</button>
     </nav>
   </aside>
   <aside class="acc-col">
@@ -282,7 +301,75 @@ function mapSelect(label, path, value, maps, hint) {
     <span class="hint">${hint}</span></label>`;
 }
 
+function spotBlock(prefix, value, title, hint) {
+  return `<label><span>${title}</span>
+    <span class="row" style="gap:8px">
+      <input data-path="${prefix}.0" type="number" value="${value[0]}">
+      <input data-path="${prefix}.1" type="number" value="${value[1]}">
+      <button type="button" class="btn pick-spot" data-prefix="${prefix}">Chọn trên ảnh</button>
+    </span>
+    <span class="hint">${hint}</span></label>`;
+}
+
+// Form farm dùng chung cho 2 nơi: tab Tài khoản (có ô "riêng" khi settings.yaml
+// có account_defaults) và trang Cài đặt chung (mặc định cho mọi acc).
+// ovr = Set tên trường acc đang đặt riêng, hoặc null = không có ô tích.
+const FARM_FIELDS = ["map", "spot", "hp_retreat_percent", "hp_resume_percent",
+  "retreat_map", "retreat_spot", "gold_transfer_threshold", "gold_keep"];
+
+function farmFields(farm, maps, ovr) {
+  const fld = (key, inner) => `<div class="fld${ovr ? " has-ovr" : ""}" data-fld="${key}">${ovr
+    ? `<span class="ovr"><input type="checkbox" data-ovr="${key}" ${ovr.has(key) ? "checked" : ""}> riêng</span>` : ""}${inner}</div>`;
+  return `
+      <div class="row">
+        ${fld("map", mapSelect("Map farm", "farm.map", farm.map, maps, "toàn bộ map trong kho đã quét (tools/harvest_maps.py) + map có template thủ công"))}
+        ${fld("spot", spotBlock("farm.spot", farm.spot, "Điểm farm trên ảnh bản đồ (X / Y)",
+          "0/0 = tap vào TÂM map đích. Đây là pixel màn hình (960x540) nơi tool tap lên ẢNH bản đồ — mở màn bản đồ đúng map trong game rồi bấm \"Chọn trên ảnh\"."))}
+      </div>
+      <div class="row">
+        ${fld("hp_retreat_percent", field("Rút về khi HP dưới (%)", "farm.hp_retreat_percent", farm.hp_retreat_percent, { type: "number", hint: "máu dưới mức này nhiều chu kỳ liền là về thành nghỉ" }))}
+        ${fld("hp_resume_percent", field("Quay lại farm khi HP đạt (%)", "farm.hp_resume_percent", farm.hp_resume_percent, { type: "number", hint: "phải lớn hơn ngưỡng rút về" }))}
+      </div>
+      <div class="row">
+        ${fld("retreat_map", mapSelect("Map rút về (thành)", "farm.retreat_map", farm.retreat_map, maps, "nơi đứng nghỉ hồi máu, vd Tuyền Châu"))}
+        ${fld("retreat_spot", spotBlock("farm.retreat_spot", farm.retreat_spot, "Điểm nghỉ trên ảnh bản đồ (X / Y)",
+          "0/0 = tap vào TÂM map thành; muốn chọn chỗ nghỉ khác thì mở màn bản đồ map thành rồi bấm \"Chọn trên ảnh\""))}
+      </div>
+      <div class="row">
+        ${fld("gold_transfer_threshold", field("Ngưỡng vàng chuyển về main", "farm.gold_transfer_threshold", farm.gold_transfer_threshold, { type: "number", hint: "vượt mức này sẽ hẹn giao dịch với acc main" }))}
+        ${fld("gold_keep", field("Vàng giữ lại sau mỗi lần chuyển", "farm.gold_keep", farm.gold_keep, { type: "number", hint: "để mua thuốc, sửa đồ" }))}
+      </div>`;
+}
+
+// Ô "riêng" bỏ tích -> các ô nhập của trường đó khoá lại và hiện giá trị CHUNG
+function wireOverrides(defaults) {
+  if (!defaults) return;
+  const apply = (box) => {
+    const key = box.dataset.ovr, on = box.checked;
+    const wrap = box.closest(".fld");
+    wrap.classList.toggle("shared", !on);
+    for (const el of wrap.querySelectorAll("[data-path], .pick-spot")) {
+      el.disabled = !on;
+      if (on || !el.dataset.path) continue;
+      const parts = el.dataset.path.split(".");          // farm.<key>[.i]
+      let v = defaults[parts[1]];
+      if (parts.length === 3) v = v[Number(parts[2])];
+      el.value = v;
+    }
+  };
+  for (const box of document.querySelectorAll("[data-ovr]")) {
+    apply(box);
+    box.addEventListener("change", () => {
+      apply(box);
+      box.closest(".fld").querySelector("[data-path]")
+        .dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+}
+
 function renderAccount(acc, maps) {
+  const hasDefaults = !!acc.farm_defaults;
+  const ovr = hasDefaults ? new Set(acc.farm_overrides || []) : null;
   $("#main").innerHTML = `
   <div class="page">
     <h2>${acc.name || acc.stem}</h2>
@@ -312,31 +399,10 @@ function renderAccount(acc, maps) {
       ${field("Slot nhân vật (1 = trên cùng)", "login.character_slot", acc.login.character_slot, { type: "number" })}
     </fieldset>
     <fieldset><legend>Farm</legend>
-      <div class="row">
-        ${mapSelect("Map farm", "farm.map", acc.farm.map, maps, "toàn bộ map trong kho đã quét (tools/harvest_maps.py) + map có template thủ công")}
-        <label><span>Điểm tap trên ảnh bản đồ — farm (pixel X / Y)</span>
-          <span class="row" style="gap:8px">
-            <input data-path="farm.spot.0" type="number" value="${acc.farm.spot[0]}">
-            <input data-path="farm.spot.1" type="number" value="${acc.farm.spot[1]}">
-            <button type="button" class="btn pick-spot" data-prefix="farm.spot">Chọn trên ảnh</button>
-          </span>
-          <span class="hint">0/0 = mặc định tap vào TÂM map đích. Muốn chọn điểm khác: đây là pixel màn hình (960x540) nơi tool tap lên ẢNH bản đồ (không phải toạ độ trong game) — mở màn bản đồ đúng map trong game rồi bấm "Chọn trên ảnh".</span></label>
-      </div>
-      <div class="row">
-        ${field("Rút về khi HP dưới (%)", "farm.hp_retreat_percent", acc.farm.hp_retreat_percent, { type: "number", hint: "máu dưới mức này nhiều chu kỳ liền là về thành nghỉ" })}
-        ${field("Quay lại farm khi HP đạt (%)", "farm.hp_resume_percent", acc.farm.hp_resume_percent, { type: "number", hint: "phải lớn hơn ngưỡng rút về" })}
-      </div>
-      <div class="row">
-        ${mapSelect("Map rút về (thành)", "farm.retreat_map", acc.farm.retreat_map, maps, "nơi đứng nghỉ hồi máu, vd Tuyền Châu")}
-        <label><span>Điểm tap trên ảnh bản đồ — nghỉ (pixel X / Y)</span>
-          <span class="row" style="gap:8px">
-            <input data-path="farm.retreat_spot.0" type="number" value="${acc.farm.retreat_spot[0]}">
-            <input data-path="farm.retreat_spot.1" type="number" value="${acc.farm.retreat_spot[1]}">
-            <button type="button" class="btn pick-spot" data-prefix="farm.retreat_spot">Chọn trên ảnh</button>
-          </span>
-          <span class="hint">0/0 = mặc định tap vào TÂM map thành; muốn chọn chỗ nghỉ khác thì mở màn bản đồ map thành rồi bấm "Chọn trên ảnh"</span></label>
-      </div>
-      ${field("Ngưỡng vàng chuyển về main", "farm.gold_transfer_threshold", acc.farm.gold_transfer_threshold, { type: "number", hint: "vượt mức này sẽ hẹn giao dịch với acc main" })}
+      <p class="lead" style="margin-bottom:14px">${hasDefaults
+        ? 'Ô <b>không tích "riêng"</b> dùng giá trị ở tab <b>Cài đặt chung</b> và đổi theo khi cài đặt chung đổi. Tích "riêng" để đặt giá trị khác cho tài khoản này.'
+        : 'settings.yaml chưa có mục <code>account_defaults</code> — mọi giá trị dưới đây là riêng của tài khoản này. Lưu "Farm mặc định" ở tab Cài đặt chung một lần để bật chế độ dùng chung.'}</p>
+      ${farmFields(acc.farm, maps, ovr)}
     </fieldset>
     <button class="btn danger" id="btnDel">Xoá tài khoản này</button>
   </div>
@@ -347,17 +413,31 @@ function renderAccount(acc, maps) {
   wireAccountPage(acc);
 }
 
-function collect(acc) {
-  const out = JSON.parse(JSON.stringify(acc));
-  delete out.stem;
-  for (const el of document.querySelectorAll("[data-path]")) {
+// Gom giá trị form (các ô [data-path] trong root) đè lên bản sao của base.
+// Ô số "nullable" để trống -> null (Number("") sẽ thành 0 = gán nhầm máy #0).
+function collectInto(root, base) {
+  const out = JSON.parse(JSON.stringify(base));
+  for (const el of root.querySelectorAll("[data-path]")) {
     const keys = el.dataset.path.split(".");
     let node = out;
-    while (keys.length > 1) node = node[keys.shift()];
-    // ô số "nullable" để trống -> null (Number("") sẽ thành 0 = gán nhầm máy #0)
+    while (keys.length > 1) {
+      if (node[keys[0]] == null) node[keys[0]] = {};
+      node = node[keys.shift()];
+    }
     node[keys[0]] = el.type !== "number" ? el.value
       : el.value === "" && "nullable" in el.dataset ? null : Number(el.value);
   }
+  for (const el of root.querySelectorAll("[data-k]")) out[el.dataset.k] = el.checked;
+  return out;
+}
+
+function collect(acc) {
+  const out = collectInto(document, acc);
+  delete out.stem; delete out.farm_defaults;
+  if (acc.farm_defaults)
+    out.farm_overrides = [...document.querySelectorAll("[data-ovr]")]
+      .filter((b) => b.checked).map((b) => b.dataset.ovr);
+  else delete out.farm_overrides;
   return out;
 }
 
@@ -450,6 +530,7 @@ function wireSpotPickers(stemOf) {
 
 function wireAccountPage(acc) {
   wireSpotPickers(() => acc.stem);
+  wireOverrides(acc.farm_defaults);
   for (const eye of document.querySelectorAll(".pw-eye")) {
     eye.onclick = () => {
       const inp = eye.parentElement.querySelector("input");
@@ -509,14 +590,25 @@ function renderEmpty() {
     <p>Bắt đầu bằng nút <b>Thêm tài khoản</b> ở đầu danh sách bên trái.</p></div>`;
 }
 
-/* ---- tab Chiêu (auto nhấn chiêu + vật phẩm hồi máu) ---- */
-async function renderSkills() {
-  const [s, accs] = await Promise.all([
-    api("GET", "/api/settings/farm-skills"),
-    api("GET", "/api/accounts").catch(() => []),
-  ]);
-  const devOpts = accs.filter((a) => !a.error).map((a) =>
-    `<option value="${a.stem}">${a.name} (${a.adb_serial})</option>`).join("");
+/* ---- trang Cài đặt chung: 4 khối, mỗi khối lưu riêng ---- */
+// Mỗi khối trả về { id, html, wire(root) }; mọi truy vấn DOM trong wire PHẢI
+// bó trong root — các khối dùng chung tên data-path/data-k trên một trang.
+function wireDirty(root, msg) {
+  for (const el of root.querySelectorAll("[data-path],[data-k],[data-k2],[data-slot]"))
+    el.addEventListener("input", () => { msg.textContent = "Có thay đổi chưa lưu."; msg.className = "msg"; });
+}
+async function saveSection(msg, btn, fn, okText) {
+  try {
+    btn.disabled = true;
+    await fn();
+    msg.textContent = okText; msg.className = "msg ok";
+  } catch (e) { msg.textContent = errText(e); msg.className = "msg err"; }
+  finally { btn.disabled = false; }
+}
+const secSave = (id, label) => `<div class="sec-save"><span class="msg" id="msg-${id}">Chưa có thay đổi.</span>
+  <button class="btn gold" id="save-${id}">${label}</button></div>`;
+
+function skillsSection(s) {
   const healOpts = [0,1,2,3,4,5,6,7,8].map((n) =>
     `<option value="${n}" ${n === s.heal_slot ? "selected" : ""}>${n === 0 ? "Không dùng" : "Ô " + n}</option>`).join("");
   const slotRows = [1,2,3,4,5,6,7,8].map((n) => `
@@ -529,11 +621,10 @@ async function renderSkills() {
       <input data-path="slot_points.${n-1}.1" type="number" value="${s.slot_points[n-1][1]}" style="width:90px; flex:none">
       <button type="button" class="btn pick-spot" data-prefix="slot_points.${n-1}">Chọn trên ảnh</button>
     </div>`).join("");
-  $("#main").innerHTML = `
-  <div class="page">
-    <h2>Auto nhấn chiêu</h2>
-    <p class="lead">Mục <code>farm.skills</code> của <code>config/settings.yaml</code> + toạ độ 8 ô trong
-    <code>config/coordinates.yaml</code> — dùng chung cho mọi acc farm (cùng môn phái).</p>
+  const html = `
+  <section class="sec" id="sec-skill">
+    <h3>Chiêu thức (auto nhấn chiêu)</h3>
+    <p class="lead">Mục <code>farm.skills</code> của settings.yaml + toạ độ 8 ô trong coordinates.yaml — dùng chung cho mọi acc farm (cùng môn phái).</p>
     <fieldset><legend>Chế độ</legend>
       <label class="toggle"><input type="checkbox" data-k="enabled" ${s.enabled ? "checked" : ""}>
         <span>Bật auto nhấn chiêu khi farm<span class="sub">xoay vòng các ô đã tích bên dưới; chiêu đang hồi thì cú tap vô hại</span></span></label>
@@ -546,49 +637,202 @@ async function renderSkills() {
           <select data-k2="heal_slot">${healOpts}</select>
           <span class="hint">ô này KHÔNG xoay vòng — chỉ nhấn khi máu tụt dưới ngưỡng</span></label>
         ${field("Dùng khi HP dưới (%)", "heal_hp_percent", s.heal_hp_percent,
-          { type: "number", hint: "nên cao hơn ngưỡng rút về của acc: thuốc cứu trước, hết cứu nổi mới rút" })}
+          { type: "number", hint: "nên cao hơn ngưỡng rút về: thuốc cứu trước, hết cứu nổi mới rút" })}
         ${field("Giãn cách 2 lần dùng thuốc (giây)", "heal_cooldown", s.heal_cooldown, { type: "number", step: "any" })}
       </div>
     </fieldset>
     <fieldset><legend>Vị trí 8 ô trên vòng chiêu (pixel X / Y, màn 960x540)</legend>
-      <label><span>Thiết bị chụp màn hình để chọn điểm</span>
-        <select id="skillDev">${devOpts || '<option value="">— chưa có tài khoản —</option>'}</select>
-        <span class="hint">mở game vào thế giới (vòng chiêu hiện rõ) rồi bấm "Chọn trên ảnh" từng ô; tích chọn = ô nằm trong vòng xoay chiêu</span></label>
+      <p class="lead" style="margin-bottom:10px">Mở game vào thế giới (vòng chiêu hiện rõ) rồi bấm "Chọn trên ảnh" từng ô; tích chọn = ô nằm trong vòng xoay chiêu. Ảnh chụp từ thiết bị chọn ở đầu trang.</p>
       ${slotRows}
     </fieldset>
-  </div>
-  <div class="savebar">
-    <span class="msg" id="msg">Chưa có thay đổi.</span>
-    <button class="btn gold" id="btnSaveSkill">Lưu cấu hình chiêu</button>
-  </div>`;
-
-  wireSpotPickers(() => $("#skillDev").value);
-  const msg = $("#msg");
-  for (const el of document.querySelectorAll("[data-k],[data-k2],[data-path],[data-slot]"))
-    el.addEventListener("input", () => { msg.textContent = "Có thay đổi chưa lưu."; msg.className = "msg"; });
-  $("#btnSaveSkill").onclick = async () => {
-    const body = {
-      enabled: $('[data-k="enabled"]').checked,
-      slots: [...document.querySelectorAll("[data-slot]")]
-        .filter((el) => el.checked).map((el) => Number(el.dataset.slot)),
-      cast_interval: Number($('[data-path="cast_interval"]').value),
-      heal_slot: Number($('[data-k2="heal_slot"]').value),
-      heal_hp_percent: Number($('[data-path="heal_hp_percent"]').value),
-      heal_cooldown: Number($('[data-path="heal_cooldown"]').value),
-      slot_points: [0,1,2,3,4,5,6,7].map((i) => [
-        Number(document.querySelector(`[data-path="slot_points.${i}.0"]`).value),
-        Number(document.querySelector(`[data-path="slot_points.${i}.1"]`).value),
-      ]),
-    };
-    try {
+    ${secSave("skill", "Lưu chiêu thức")}
+  </section>`;
+  const wire = (root) => {
+    const msg = root.querySelector("#msg-skill"), btn = root.querySelector("#save-skill");
+    wireDirty(root, msg);
+    btn.onclick = () => saveSection(msg, btn, async () => {
+      const q = (sel) => root.querySelector(sel);
+      const body = {
+        enabled: q('[data-k="enabled"]').checked,
+        slots: [...root.querySelectorAll("[data-slot]")]
+          .filter((el) => el.checked).map((el) => Number(el.dataset.slot)),
+        cast_interval: Number(q('[data-path="cast_interval"]').value),
+        heal_slot: Number(q('[data-k2="heal_slot"]').value),
+        heal_hp_percent: Number(q('[data-path="heal_hp_percent"]').value),
+        heal_cooldown: Number(q('[data-path="heal_cooldown"]').value),
+        slot_points: [0,1,2,3,4,5,6,7].map((i) => [
+          Number(q(`[data-path="slot_points.${i}.0"]`).value),
+          Number(q(`[data-path="slot_points.${i}.1"]`).value),
+        ]),
+      };
       await api("PUT", "/api/settings/farm-skills", body);
-      const st = await api("GET", "/api/runner").catch(() => ({ running: false }));
-      msg.textContent = st.running
-        ? "Đã lưu — runner đang chạy đọc cấu hình lúc khởi động, hãy chạy lại runner (lưu lại ở tab Tài khoản) để áp dụng."
-        : "Đã lưu vào settings.yaml + coordinates.yaml.";
-      msg.className = "msg ok";
-    } catch (e) { msg.textContent = errText(e); msg.className = "msg err"; }
+    }, "Đã lưu vào settings.yaml + coordinates.yaml.");
   };
+  return { id: "sec-skill", html, wire };
+}
+
+function sealFor(s) {
+  if (s.dry_run) return ["safe", "Chạy khô (dry run)",
+    "Mọi hành động không thể hoàn tác — bán, mua, giao dịch — chỉ được chụp màn và ghi log, không thực hiện."];
+  if (s.confirm_mode) return ["warn", "Chạy thật, có người duyệt",
+    "Bán đồ và chuyển vàng sẽ THỰC HIỆN sau khi được duyệt từng lệnh. Hết giờ chờ tính là từ chối."];
+  return ["danger", "Chạy thật, không người duyệt",
+    "Tool tự bán, mua và chuyển vàng mà không hỏi lại. Chỉ bật khi đã tin tưởng hoàn toàn sau thời gian dài theo dõi."];
+}
+
+function safetySection(s) {
+  const [cls, title, desc] = sealFor(s);
+  const html = `
+  <section class="sec" id="sec-safe">
+    <h3>An toàn</h3>
+    <p class="lead">Mục <code>safety</code> của settings.yaml — áp dụng cho mọi tài khoản.</p>
+    <div class="seal ${cls}" id="seal"><b>${title}</b>${desc}</div>
+    <fieldset><legend>Chế độ</legend>
+      <label class="toggle"><input type="checkbox" data-k="dry_run" ${s.dry_run ? "checked" : ""}>
+        <span>Chạy khô (dry run)<span class="sub">tắt đi là tool bắt đầu bán/mua/giao dịch thật</span></span></label>
+      <label class="toggle"><input type="checkbox" data-k="confirm_mode" ${s.confirm_mode ? "checked" : ""}>
+        <span>Duyệt từng lệnh<span class="sub">gửi ảnh và chờ xác nhận trước khi bán đồ / chuyển vàng</span></span></label>
+      ${field("Chờ duyệt tối đa (giây) — hết giờ coi như từ chối", "confirm_timeout_seconds", s.confirm_timeout_seconds, { type: "number", step: "any" })}
+    </fieldset>
+    <fieldset><legend>Giới hạn</legend>
+      <div class="row">
+        ${field("Thao tác tối đa mỗi phút", "max_actions_per_minute", s.max_actions_per_minute, { type: "number" })}
+        ${field("Hành động không hoàn tác tối đa / phiên", "max_irreversible_per_session", s.max_irreversible_per_session, { type: "number" })}
+      </div>
+      <div class="row">
+        ${field("Số lần tự phục hồi liên tiếp tối đa", "max_recover_attempts", s.max_recover_attempts, { type: "number" })}
+        ${field("File dừng khẩn cấp", "kill_switch_file", s.kill_switch_file, { hint: "tạo file tên này ở thư mục gốc là mọi task dừng sạch" })}
+      </div>
+      <div class="row">
+        ${field("Nghỉ giữa thao tác — ít nhất (giây)", "action_delay.min_seconds", s.action_delay.min_seconds, { type: "number", step: "any" })}
+        ${field("— nhiều nhất (giây)", "action_delay.max_seconds", s.action_delay.max_seconds, { type: "number", step: "any" })}
+      </div>
+    </fieldset>
+    ${secSave("safe", "Lưu an toàn")}
+  </section>`;
+  const wire = (root) => {
+    const msg = root.querySelector("#msg-safe"), btn = root.querySelector("#save-safe");
+    const repaint = () => {
+      const [cls2, t2, d2] = sealFor(collectInto(root, s));
+      const seal = root.querySelector("#seal");
+      seal.className = `seal ${cls2}`; seal.innerHTML = `<b>${t2}</b>${d2}`;
+      msg.textContent = "Có thay đổi chưa lưu."; msg.className = "msg";
+    };
+    for (const el of root.querySelectorAll("[data-k],[data-path]")) el.addEventListener("input", repaint);
+    btn.onclick = () => saveSection(msg, btn,
+      () => api("PUT", "/api/settings/safety", collectInto(root, s)), "Đã lưu vào settings.yaml.");
+  };
+  return { id: "sec-safe", html, wire };
+}
+
+// Farm mặc định cho mọi tài khoản (settings.yaml: account_defaults.farm)
+function farmDefaultsSection(d, maps) {
+  const farm = d.farm || { map: "", spot: [0, 0], hp_retreat_percent: 30, hp_resume_percent: 90,
+    retreat_map: "", retreat_spot: [0, 0], gold_transfer_threshold: 1000000, gold_keep: 0 };
+  const html = `
+  <section class="sec" id="sec-def">
+    <h3>Farm mặc định cho mọi tài khoản</h3>
+    <p class="lead">Mục <code>account_defaults.farm</code> của settings.yaml. Tài khoản nào không tích "riêng" ở tab Tài khoản sẽ dùng các giá trị này.${
+      d.configured ? "" : ' <b>settings.yaml chưa có mục này</b> — lưu một lần để tạo; sau đó tab Tài khoản mới có ô "riêng".'}</p>
+    <fieldset><legend>Farm</legend>${farmFields(farm, maps, null)}</fieldset>
+    ${secSave("def", "Lưu farm mặc định")}
+  </section>`;
+  const wire = (root) => {
+    const msg = root.querySelector("#msg-def"), btn = root.querySelector("#save-def");
+    wireDirty(root, msg);
+    btn.onclick = () => saveSection(msg, btn, async () => {
+      await api("PUT", "/api/settings/account-defaults", collectInto(root, { farm }));
+      _mapLib = null;
+    }, "Đã lưu — các tài khoản dùng chung nhận giá trị mới ở lần chạy lại.");
+  };
+  return { id: "sec-def", html, wire };
+}
+
+// Thông số farm toàn cục (settings.yaml: farm.*, trừ skills)
+function farmParamsSection(f) {
+  const n = (label, key, hint, step) => field(label, key, f[key], { type: "number", step: step || "any", hint });
+  const html = `
+  <section class="sec" id="sec-farm">
+    <h3>Thông số farm</h3>
+    <p class="lead">Mục <code>farm</code> của settings.yaml — cách tool giám sát và điều hướng, chung cho mọi tài khoản.</p>
+    <fieldset><legend>Giám sát HP</legend>
+      <div class="row">
+        ${n("HP khẩn cấp — rút về NGAY khi dưới (%)", "hp_emergency_percent", "không chờ đủ chu kỳ; nên cao hơn ngưỡng rút về của acc", "1")}
+        ${n("Số chu kỳ HP thấp liên tiếp mới rút", "hp_low_cycles", "auto game có tự uống thuốc — 1 chu kỳ tụt máu chưa phải khẩn cấp", "1")}
+        ${n("Chu kỳ giám sát (giây)", "monitor_interval", "quái có thể rút 20-30% máu trong 5s — đừng đặt thưa")}
+      </div>
+    </fieldset>
+    <fieldset><legend>Điều hướng</legend>
+      <div class="row">
+        ${n("Chờ tìm đường bắt đầu (giây)", "travel_start_timeout", "map đóng rồi mà chưa nhúc nhích quá lâu thì làm lại")}
+        ${n("Chờ thao tác màn bản đồ (giây)", "map_timeout", "mở/đóng/chuyển tab")}
+        ${n("Chờ trước khi tap lại điểm đến (giây)", "map_spot_retap_seconds", "game hay nuốt tap đầu; tap ăn thì map đóng sau ~2s")}
+      </div>
+      <div class="row">
+        ${n("Số lần làm lại điều hướng", "nav_retries", "", "1")}
+        ${n("Trần thời gian đi tới điểm farm (giây)", "travel_timeout", "")}
+        ${n("Trần thời gian nghỉ hồi máu (giây)", "rest_timeout", "")}
+      </div>
+    </fieldset>
+    <details class="adv"><summary>Nâng cao (ít khi cần chỉnh)</summary>
+      <fieldset><legend>Nâng cao</legend>
+        <div class="row">
+          ${n("Chu kỳ mất màn hình trước khi phục hồi", "lost_cycles", "", "1")}
+          ${n("Số lần bật lại auto tối đa / phiên", "auto_reenable_limit", "", "1")}
+          ${n("Đứng ngây N chu kỳ thì bật lại auto", "monitor_idle_cycles", "", "1")}
+        </div>
+        <div class="row">
+          ${n("Số lần tap điểm đến", "map_spot_tap_attempts", "", "1")}
+          ${n("Chu kỳ đứng yên = kẹt giữa đường", "travel_stall_cycles", "", "1")}
+          ${n("Đi theo NPC gỡ kẹt (giây)", "unstick_walk_seconds", "")}
+        </div>
+        <div class="row">
+          ${n("Nghỉ trước khi bật auto (giây)", "engage_settle_seconds", "")}
+          ${n("Chờ auto thực sự đánh (giây)", "engage_timeout", "")}
+          ${n("Số lần bật lại auto khi không đánh", "engage_retries", "", "1")}
+        </div>
+        <div class="row">
+          ${n("Chu kỳ kiểm tra tới nơi (giây)", "arrive_check_interval", "")}
+          ${n("Đứng yên N chu kỳ = đã tới", "arrive_stable_cycles", "", "1")}
+          ${n("Tắt/bật auto đánh thức AI (giây)", "engage_warmup_toggle_seconds", "")}
+        </div>
+      </fieldset>
+    </details>
+    ${secSave("farm", "Lưu thông số farm")}
+  </section>`;
+  const wire = (root) => {
+    const msg = root.querySelector("#msg-farm"), btn = root.querySelector("#save-farm");
+    wireDirty(root, msg);
+    btn.onclick = () => saveSection(msg, btn,
+      () => api("PUT", "/api/settings/farm", collectInto(root, {})), "Đã lưu vào settings.yaml.");
+  };
+  return { id: "sec-farm", html, wire };
+}
+
+async function renderSettings() {
+  const [safety, defaults, farm, skills, accs, maps] = await Promise.all([
+    api("GET", "/api/settings/safety"),
+    api("GET", "/api/settings/account-defaults"),
+    api("GET", "/api/settings/farm"),
+    api("GET", "/api/settings/farm-skills"),
+    api("GET", "/api/accounts").catch(() => []),
+    api("GET", "/api/farm-maps").catch(() => []),
+  ]);
+  const devOpts = accs.filter((a) => !a.error).map((a) =>
+    `<option value="${a.stem}">${a.name} (${a.adb_serial})</option>`).join("");
+  const secs = [safetySection(safety), farmDefaultsSection(defaults, maps),
+    farmParamsSection(farm), skillsSection(skills)];
+  $("#main").innerHTML = `
+  <div class="page" style="max-width:760px">
+    <h2>Cài đặt chung</h2>
+    <p class="lead">Áp dụng cho mọi tài khoản. Worker đang chạy chỉ đọc cấu hình lúc khởi động —
+    sau khi lưu, bấm <b>Chạy lại</b> ở tab Thiết bị để áp dụng.</p>
+    <label><span>Thiết bị chụp màn hình khi "Chọn trên ảnh"</span>
+      <select id="settingsDev">${devOpts || '<option value="">— chưa có tài khoản —</option>'}</select></label>
+    ${secs.map((x) => x.html).join("")}
+  </div>`;
+  wireSpotPickers(() => $("#settingsDev").value);
+  for (const x of secs) x.wire($("#" + x.id));
 }
 
 /* ---- tab Thiết bị (worker theo từng tài khoản — W2) ---- */
@@ -661,77 +905,6 @@ async function renderWorkers() {
 }
 
 /* ---- tab An toàn ---- */
-function sealFor(s) {
-  if (s.dry_run) return ["safe", "Chạy khô (dry run)",
-    "Mọi hành động không thể hoàn tác — bán, mua, giao dịch — chỉ được chụp màn và ghi log, không thực hiện."];
-  if (s.confirm_mode) return ["warn", "Chạy thật, có người duyệt",
-    "Bán đồ và chuyển vàng sẽ THỰC HIỆN sau khi được duyệt từng lệnh. Hết giờ chờ tính là từ chối."];
-  return ["danger", "Chạy thật, không người duyệt",
-    "Tool tự bán, mua và chuyển vàng mà không hỏi lại. Chỉ bật khi đã tin tưởng hoàn toàn sau thời gian dài theo dõi."];
-}
-
-async function renderSafety() {
-  const s = await api("GET", "/api/settings/safety");
-  const [cls, title, desc] = sealFor(s);
-  $("#main").innerHTML = `
-  <div class="page">
-    <h2>An toàn</h2>
-    <p class="lead">Mục <code>safety</code> của <code>config/settings.yaml</code> — áp dụng cho mọi tài khoản.</p>
-    <div class="seal ${cls}" id="seal"><b>${title}</b>${desc}</div>
-    <fieldset><legend>Chế độ</legend>
-      <label class="toggle"><input type="checkbox" data-k="dry_run" ${s.dry_run ? "checked" : ""}>
-        <span>Chạy khô (dry run)<span class="sub">tắt đi là tool bắt đầu bán/mua/giao dịch thật</span></span></label>
-      <label class="toggle"><input type="checkbox" data-k="confirm_mode" ${s.confirm_mode ? "checked" : ""}>
-        <span>Duyệt từng lệnh<span class="sub">gửi ảnh và chờ xác nhận trước khi bán đồ / chuyển vàng</span></span></label>
-      ${field("Chờ duyệt tối đa (giây) — hết giờ coi như từ chối", "confirm_timeout_seconds", s.confirm_timeout_seconds, { type: "number", step: "any" })}
-    </fieldset>
-    <fieldset><legend>Giới hạn</legend>
-      <div class="row">
-        ${field("Thao tác tối đa mỗi phút", "max_actions_per_minute", s.max_actions_per_minute, { type: "number" })}
-        ${field("Hành động không hoàn tác tối đa / phiên", "max_irreversible_per_session", s.max_irreversible_per_session, { type: "number" })}
-      </div>
-      <div class="row">
-        ${field("Số lần tự phục hồi liên tiếp tối đa", "max_recover_attempts", s.max_recover_attempts, { type: "number" })}
-        ${field("File dừng khẩn cấp", "kill_switch_file", s.kill_switch_file, { hint: "tạo file tên này ở thư mục gốc là mọi task dừng sạch" })}
-      </div>
-      <div class="row">
-        ${field("Nghỉ giữa thao tác — ít nhất (giây)", "action_delay.min_seconds", s.action_delay.min_seconds, { type: "number", step: "any" })}
-        ${field("— nhiều nhất (giây)", "action_delay.max_seconds", s.action_delay.max_seconds, { type: "number", step: "any" })}
-      </div>
-    </fieldset>
-  </div>
-  <div class="savebar">
-    <span class="msg" id="msg">Chưa có thay đổi.</span>
-    <button class="btn gold" id="btnSaveSafe">Lưu cài đặt an toàn</button>
-  </div>`;
-
-  const collectSafety = () => {
-    const out = JSON.parse(JSON.stringify(s));
-    for (const el of document.querySelectorAll("[data-k]")) out[el.dataset.k] = el.checked;
-    for (const el of document.querySelectorAll("[data-path]")) {
-      const keys = el.dataset.path.split(".");
-      let node = out;
-      while (keys.length > 1) node = node[keys.shift()];
-      node[keys[0]] = el.type === "number" ? Number(el.value) : el.value;
-    }
-    return out;
-  };
-  const msg = $("#msg");
-  const repaint = () => {
-    const [cls2, t2, d2] = sealFor(collectSafety());
-    const seal = $("#seal");
-    seal.className = `seal ${cls2}`; seal.innerHTML = `<b>${t2}</b>${d2}`;
-    msg.textContent = "Có thay đổi chưa lưu."; msg.className = "msg";
-  };
-  for (const el of document.querySelectorAll("[data-k],[data-path]")) el.addEventListener("input", repaint);
-  $("#btnSaveSafe").onclick = async () => {
-    try {
-      await api("PUT", "/api/settings/safety", collectSafety());
-      msg.textContent = "Đã lưu vào settings.yaml."; msg.className = "msg ok";
-    } catch (e) { msg.textContent = errText(e); msg.className = "msg err"; }
-  };
-}
-
 /* ---- điều hướng ---- */
 // lỗi tải trang (server cũ thiếu endpoint, server chết...) phải HIỆN RA,
 // không được nuốt im lặng — người dùng tưởng bấm không ăn
@@ -750,15 +923,13 @@ function switchTab(name, render) {
 }
 $("#tabAcc").onclick = () => switchTab("acc", () => current ? openAccount(current) : renderEmpty());
 $("#tabDev").onclick = () => switchTab("dev", () => renderWorkers().catch(renderError));
-$("#tabSkill").onclick = () => switchTab("skill", () => renderSkills().catch(renderError));
-$("#tabSafe").onclick = () => switchTab("safe", () => renderSafety().catch(renderError));
+$("#tabSettings").onclick = () => switchTab("settings", () => renderSettings().catch(renderError));
 function paintTabs() {
   // cột danh sách tài khoản chỉ hiện ở mục Tài khoản
   $("#app").classList.toggle("show-list", tab === "acc");
   $("#tabAcc").classList.toggle("on", tab === "acc");
   $("#tabDev").classList.toggle("on", tab === "dev");
-  $("#tabSkill").classList.toggle("on", tab === "skill");
-  $("#tabSafe").classList.toggle("on", tab === "safe");
+  $("#tabSettings").classList.toggle("on", tab === "settings");
 }
 $("#btnNew").onclick = () => { $("#newStem").value = ""; $("#dlgNew").showModal(); };
 $("#dlgNew").addEventListener("close", async () => {

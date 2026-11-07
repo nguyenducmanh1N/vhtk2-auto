@@ -113,18 +113,27 @@ python tools\template_check.py
    python -m vhtk.ui --browser
    ```
 
-   Tab **An toàn**: xác nhận `dry_run` đang **BẬT** (từng bị tắt khi test
-   bán thật trên AVD — kiểm tra lại!). `confirm_mode` hiện tắt là đúng:
-   notifier còn là Null (chưa nối Telegram) — bật lại khi làm xong 5a.
-2. Tab **Tài khoản** → tạo acc test: server, user/pass 3CID, slot nhân vật,
-   map farm + điểm farm, map rút về. (Acc phải ĐÃ tạo nhân vật tay 1 lần —
-   gặp màn "Tạo nhân vật" tool sẽ ABORT, đúng thiết kế.)
-3. Login 5 lần liên tiếp:
+   Tab **Cài đặt chung** → khối **An toàn**: xác nhận `dry_run` đang **BẬT**
+   (từng bị tắt khi test bán thật trên AVD — kiểm tra lại!). `confirm_mode`
+   hiện tắt là đúng: notifier còn là Null (chưa nối Telegram) — bật lại khi
+   làm xong 5a.
+2. Cùng tab **Cài đặt chung** → khối **Farm mặc định cho mọi tài khoản**: đặt
+   map farm + điểm farm, ngưỡng HP, map/điểm rút về, ngưỡng vàng MỘT LẦN cho
+   cả dàn acc (ghi vào `settings.yaml` mục `account_defaults.farm`). Khối
+   **Thông số farm** và **Chiêu thức** cũng ở đây.
+3. Tab **Tài khoản** → tạo acc test: server, user/pass 3CID, slot nhân vật.
+   Mục Farm mặc định dùng giá trị chung; acc nào cần khác (map farm riêng...)
+   thì tích ô **"riêng"** cạnh trường đó rồi sửa. File acc chỉ ghi trường
+   "riêng"; bỏ tích là trường bị xoá khỏi file và dùng chung trở lại.
+   (Acc phải ĐÃ tạo nhân vật tay 1 lần — gặp màn "Tạo nhân vật" tool sẽ
+   ABORT, đúng thiết kế.) Worker đang chạy chỉ đọc cấu hình lúc khởi động —
+   đổi cài đặt chung xong nhớ **Chạy lại** ở tab Thiết bị.
+4. Login 5 lần liên tiếp:
 
    ```bat
    python tools\run_login.py --account config\accounts\farm01.yaml --runs 5
    ```
-4. Test bán đồ (an toàn — `dry_run` bật thì KHÔNG bán thật, chỉ in danh
+5. Test bán đồ (an toàn — `dry_run` bật thì KHÔNG bán thật, chỉ in danh
    sách WOULD SELL + lưu ảnh bằng chứng vào `logs\dry_run\`):
 
    ```bat
@@ -135,7 +144,7 @@ python tools\template_check.py
    → mở Cửa hiệu → chế độ Bán → quét túi → in báo cáo
    (`sold / would_sell / kept_unknown / kept_quality`). Đạt khi status
    `success` và mọi món ngoài whitelist đều nằm ở `kept_unknown`.
-5. Farm chu kỳ đầu: tab **Thiết bị** → nút **"Mở & đăng nhập"**. Đây là test
+6. Farm chu kỳ đầu: tab **Thiết bị** → nút **"Mở & đăng nhập"**. Đây là test
    supervisor thật đầu tiên: `ldconsole launch` → chờ boot → resolve serial
    (lệch thì tự ghi lại YAML) → spawn worker → login → farm. Theo dõi:
 

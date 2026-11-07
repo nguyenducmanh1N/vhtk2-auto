@@ -1,6 +1,6 @@
 # Tiến độ dự án VHTK2 Auto Tool
 
-Cập nhật lần cuối: 2026-10-25. Kế hoạch chi tiết từng giai đoạn + tiêu chí nghiệm thu: xem `PLAN.md`.
+Cập nhật lần cuối: 2026-11-07. Kế hoạch chi tiết từng giai đoạn + tiêu chí nghiệm thu: xem `PLAN.md`.
 
 ## Trạng thái tổng quan
 
@@ -15,10 +15,11 @@ Cập nhật lần cuối: 2026-10-25. Kế hoạch chi tiết từng giai đo�
 | 4.2 | R3 Farm + Retreat + navigate (di chuyển, bật auto, giám sát HP, rút về) | 🔶 Code + test xong; **live trên AVD cả chu trình tự nhiên**: tới map farm → bật auto → MONITOR → quái đánh tụt HP < 30% thật → HP_LOW → tắt auto → đi bộ về Tuyền Châu → REST hồi ≥ 90% → tự quay lại farm chu kỳ 2; kill-switch dừng sạch 4s. Còn thiếu DoD: chạy bền ≥ 2h |
 | 4.3–4.5 | sell, equipment, skill_verify | ⬜ Chưa làm (stub) |
 | D1 | App desktop — quản lý tài khoản & an toàn (`python -m vhtk.ui`): CRUD acc trên YAML giữ comment, tab An toàn có dải trạng thái bảo vệ; FastAPI + web UI, pywebview tuỳ chọn | ✅ Xong, đã verify bằng trình duyệt |
+| D1b | Cài đặt chung (2026-11-07): `settings.account_defaults.farm` làm mặc định cho mọi acc, file acc chỉ ghi trường "riêng"; GUI tab Cài đặt chung (An toàn · Farm mặc định · Thông số farm · Chiêu) + ô tích "riêng" ở tab Tài khoản | ✅ Xong, 330 test, verify trình duyệt |
 | 5 | Orchestrator đa instance + notify Telegram | 🔶 W2-prep XONG trên Mac (2026-10-28): worker process + registry + supervisor + scheduler + API/GUI; còn nghiệm thu thật trên Windows (W1→W2). Notify Telegram thật chưa làm |
 | W3 | R4 chuyển vàng về main (giao dịch trực tiếp) | 🔶 Code + test xong trên Mac (2026-11-04): đọc tiền OCR, cờ ngưỡng, 2 FSM giao dịch, hàng rào file, coordinator mở main on-demand. **Chặn bởi UI contract**: chưa có ảnh khung giao dịch (template `trade/`, toạ độ `coordinates.trade`, template `common/btn_bag`) |
 
-Kiểm tra hiện tại: **308 test pass**, `ruff check` sạch, `mypy --strict` sạch (32 file).
+Kiểm tra hiện tại: **330 test pass**, `ruff check` sạch, `mypy --strict` sạch (31 file).
 
 ## Giai đoạn 0 — Bộ khung
 
