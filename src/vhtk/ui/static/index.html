@@ -85,6 +85,9 @@
   .btn.danger { color: var(--red); border-color: #5a2d26; background: transparent; }
   .btn.wide { width: 100%; }
   .btn:disabled { opacity: .5; cursor: default; }
+  /* thẻ thiết bị bấm được -> mở tab Tài khoản của acc đó */
+  .dev-card { cursor: pointer; transition: border-color .12s ease; }
+  .dev-card:hover { border-color: var(--gold); }
 
   /* ---- khung phải ---- */
   .main { flex: 1; overflow: auto; }
@@ -604,7 +607,7 @@ async function renderWorkers() {
       + `<span class="meta" style="font-family:var(--mono)"> pid ${w.pid}${where}</span>`;
   };
   const items = rows.map((w) => `
-    <fieldset style="margin-bottom:12px">
+    <fieldset class="dev-card" data-open="${w.stem}" title="Bấm để mở tài khoản ${w.stem}" style="margin-bottom:12px">
       <div class="row" style="align-items:center">
         <div style="flex:2">
           <b>${w.name || w.stem}</b>
@@ -637,6 +640,12 @@ async function renderWorkers() {
     const el = $("#workerMsg");
     if (el) { el.textContent = text; el.style.color = isErr ? "var(--red)" : "var(--ink-dim)"; }
   };
+  // bấm vào thẻ (ngoài các nút) -> sang tab Tài khoản, mở đúng acc
+  for (const card of document.querySelectorAll(".dev-card"))
+    card.onclick = (ev) => {
+      if (ev.target.closest("button")) return;
+      switchTab("acc", () => openAccount(card.dataset.open).catch(renderError));
+    };
   for (const btn of document.querySelectorAll("[data-op]"))
     btn.onclick = async () => {
       const { op, stem } = btn.dataset;
