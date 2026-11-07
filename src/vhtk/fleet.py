@@ -270,7 +270,12 @@ class Watchdog:
             # treo thì đã ghi nhận hỏng trước -> pending, không rơi vào đây)
             return None
         if not h.pending:
-            reason = str(state.get("reason") or state.get("status") or "worker not running")
+            status = str(state.get("status", ""))
+            reason = str(state.get("reason") or "")
+            if status in ("running", "") and not reason:
+                # tiến trình chết đột ngột (crash cứng/bị kill) — không kịp ghi lý do
+                reason = "worker process exited unexpectedly"
+            reason = reason or status
             if needs_human(state):
                 h.gave_up = True
                 h.pending = True

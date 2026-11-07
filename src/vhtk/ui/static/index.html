@@ -85,6 +85,17 @@
   .btn.danger { color: var(--red); border-color: #5a2d26; background: transparent; }
   .btn.wide { width: 100%; }
   .btn:disabled { opacity: .5; cursor: default; }
+  /* thẻ thiết bị: viền trái theo pha (đỏ = lỗi, vàng = đang xử lý/máy bật, xanh = chạy) */
+  .dev-card { margin-bottom: 12px; border-left-width: 4px; }
+  .dev-card.tone-jade { border-left-color: var(--jade); }
+  .dev-card.tone-amber { border-left-color: var(--amber); }
+  .dev-card.tone-red { border-left-color: var(--red); background: #24171a; }
+  .dev-card .meta, .sysbar .meta { display: block; color: var(--ink-dim); font-size: 12.5px; margin-top: 2px; }
+  .dev-card .dev-head, .sysbar .dev-head { font-weight: 600; }
+  .dev-card.tone-red .dev-head { color: var(--red); }
+  .dev-card.tone-jade .dev-head { color: var(--jade); }
+  .dev-card.tone-amber .dev-head { color: var(--amber); }
+  .sysbar { margin-bottom: 14px; }
   /* thẻ thiết bị bấm được -> mở tab Tài khoản của acc đó */
   .dev-card { cursor: pointer; transition: border-color .12s ease; }
   .dev-card:hover { border-color: var(--gold); }
@@ -119,16 +130,10 @@
   .savebar .msg.ok { color: var(--jade); }
   .savebar .msg.err { color: var(--red); white-space: pre-line; }
 
-  /* ---- ô "riêng" (ghi đè cài đặt chung) trên form tài khoản ---- */
-  .row > .fld { flex: 1; position: relative; }
+  /* ---- mục Farm trên form tài khoản: công tắc "đặt riêng" cho cả mục ---- */
+  .row > .fld { flex: 1; }
   .fld > label { margin-bottom: 10px; }
-  .fld.has-ovr > label > span:first-child { padding-right: 64px; }  /* chừa chỗ cho ô "riêng" */
-  .fld .ovr {
-    position: absolute; right: 0; top: 0; display: flex; gap: 5px; align-items: center;
-    font-size: 12px; color: var(--ink-dim); cursor: pointer;
-  }
-  .fld .ovr input { width: auto; margin: 0; accent-color: var(--gold); }
-  .fld.shared input, .fld.shared select, .fld.shared .btn { opacity: .5; }
+  .farm-fields.shared input, .farm-fields.shared select, .farm-fields.shared .btn { opacity: .5; }
   /* ---- trang Cài đặt chung: nhiều khối, mỗi khối một nút lưu ---- */
   .sec { margin-bottom: 30px; }
   .sec h3 { margin: 0 0 10px; font-size: 16px; font-weight: 600; color: var(--gold); }
@@ -317,10 +322,9 @@ function spotBlock(prefix, value, title, hint) {
 const FARM_FIELDS = ["map", "spot", "hp_retreat_percent", "hp_resume_percent",
   "retreat_map", "retreat_spot", "gold_transfer_threshold", "gold_keep"];
 
-function farmFields(farm, maps, ovr) {
-  const fld = (key, inner) => `<div class="fld${ovr ? " has-ovr" : ""}" data-fld="${key}">${ovr
-    ? `<span class="ovr"><input type="checkbox" data-ovr="${key}" ${ovr.has(key) ? "checked" : ""}> riêng</span>` : ""}${inner}</div>`;
-  return `
+function farmFields(farm, maps) {
+  const fld = (key, inner) => `<div class="fld" data-fld="${key}">${inner}</div>`;
+  return `<div class="farm-fields">
       <div class="row">
         ${fld("map", mapSelect("Map farm", "farm.map", farm.map, maps, "toàn bộ map trong kho đã quét (tools/harvest_maps.py) + map có template thủ công"))}
         ${fld("spot", spotBlock("farm.spot", farm.spot, "Điểm farm trên ảnh bản đồ (X / Y)",
@@ -338,38 +342,38 @@ function farmFields(farm, maps, ovr) {
       <div class="row">
         ${fld("gold_transfer_threshold", field("Ngưỡng vàng chuyển về main", "farm.gold_transfer_threshold", farm.gold_transfer_threshold, { type: "number", hint: "vượt mức này sẽ hẹn giao dịch với acc main" }))}
         ${fld("gold_keep", field("Vàng giữ lại sau mỗi lần chuyển", "farm.gold_keep", farm.gold_keep, { type: "number", hint: "để mua thuốc, sửa đồ" }))}
-      </div>`;
+      </div></div>`;
 }
 
-// Ô "riêng" bỏ tích -> các ô nhập của trường đó khoá lại và hiện giá trị CHUNG
-function wireOverrides(defaults) {
-  if (!defaults) return;
-  const apply = (box) => {
-    const key = box.dataset.ovr, on = box.checked;
-    const wrap = box.closest(".fld");
-    wrap.classList.toggle("shared", !on);
+// Công tắc "Đặt riêng" của cả mục Farm: tắt = mọi ô khoá lại, hiện giá trị
+// CHUNG (lưu thì file acc bỏ trống farm); bật = cả mục là của acc này.
+function wireFarmOwn(defaults) {
+  const box = $("#farmOwn");
+  if (!defaults || !box) return;
+  const wrap = document.querySelector(".farm-fields");
+  const apply = () => {
+    const own = box.checked;
+    wrap.classList.toggle("shared", !own);
     for (const el of wrap.querySelectorAll("[data-path], .pick-spot")) {
-      el.disabled = !on;
-      if (on || !el.dataset.path) continue;
+      el.disabled = !own;
+      if (own || !el.dataset.path) continue;
       const parts = el.dataset.path.split(".");          // farm.<key>[.i]
       let v = defaults[parts[1]];
       if (parts.length === 3) v = v[Number(parts[2])];
       el.value = v;
     }
   };
-  for (const box of document.querySelectorAll("[data-ovr]")) {
-    apply(box);
-    box.addEventListener("change", () => {
-      apply(box);
-      box.closest(".fld").querySelector("[data-path]")
-        .dispatchEvent(new Event("input", { bubbles: true }));
-    });
-  }
+  apply();
+  box.addEventListener("change", () => {
+    apply();
+    wrap.querySelector("[data-path]").dispatchEvent(new Event("input", { bubbles: true }));
+  });
 }
 
 function renderAccount(acc, maps) {
   const hasDefaults = !!acc.farm_defaults;
-  const ovr = hasDefaults ? new Set(acc.farm_overrides || []) : null;
+  // file acc còn trường farm nào (kể cả file cũ ghi đủ) = đang đặt riêng
+  const own = hasDefaults && (acc.farm_overrides || []).length > 0;
   $("#main").innerHTML = `
   <div class="page">
     <h2>${acc.name || acc.stem}</h2>
@@ -399,10 +403,11 @@ function renderAccount(acc, maps) {
       ${field("Slot nhân vật (1 = trên cùng)", "login.character_slot", acc.login.character_slot, { type: "number" })}
     </fieldset>
     <fieldset><legend>Farm</legend>
-      <p class="lead" style="margin-bottom:14px">${hasDefaults
-        ? 'Ô <b>không tích "riêng"</b> dùng giá trị ở tab <b>Cài đặt chung</b> và đổi theo khi cài đặt chung đổi. Tích "riêng" để đặt giá trị khác cho tài khoản này.'
-        : 'settings.yaml chưa có mục <code>account_defaults</code> — mọi giá trị dưới đây là riêng của tài khoản này. Lưu "Farm mặc định" ở tab Cài đặt chung một lần để bật chế độ dùng chung.'}</p>
-      ${farmFields(acc.farm, maps, ovr)}
+      ${hasDefaults
+        ? `<label class="toggle"><input type="checkbox" id="farmOwn" ${own ? "checked" : ""}>
+             <span>Đặt riêng cho tài khoản này<span class="sub">tắt = cả mục Farm dùng tab <b>Cài đặt chung</b> và đổi theo khi cài đặt chung đổi; bật = mọi giá trị dưới đây là của riêng tài khoản này</span></span></label>`
+        : '<p class="lead" style="margin-bottom:14px">settings.yaml chưa có mục <code>account_defaults</code> — mọi giá trị dưới đây là riêng của tài khoản này. Lưu "Farm mặc định" ở tab Cài đặt chung một lần để bật chế độ dùng chung.</p>'}
+      ${farmFields(acc.farm, maps)}
     </fieldset>
     <button class="btn danger" id="btnDel">Xoá tài khoản này</button>
   </div>
@@ -435,8 +440,7 @@ function collect(acc) {
   const out = collectInto(document, acc);
   delete out.stem; delete out.farm_defaults;
   if (acc.farm_defaults)
-    out.farm_overrides = [...document.querySelectorAll("[data-ovr]")]
-      .filter((b) => b.checked).map((b) => b.dataset.ovr);
+    out.farm_overrides = $("#farmOwn").checked ? [...FARM_FIELDS] : [];
   else delete out.farm_overrides;
   return out;
 }
@@ -530,7 +534,7 @@ function wireSpotPickers(stemOf) {
 
 function wireAccountPage(acc) {
   wireSpotPickers(() => acc.stem);
-  wireOverrides(acc.farm_defaults);
+  wireFarmOwn(acc.farm_defaults);
   for (const eye of document.querySelectorAll(".pw-eye")) {
     eye.onclick = () => {
       const inp = eye.parentElement.querySelector("input");
@@ -734,7 +738,7 @@ function farmDefaultsSection(d, maps) {
     <h3>Farm mặc định cho mọi tài khoản</h3>
     <p class="lead">Mục <code>account_defaults.farm</code> của settings.yaml. Tài khoản nào không tích "riêng" ở tab Tài khoản sẽ dùng các giá trị này.${
       d.configured ? "" : ' <b>settings.yaml chưa có mục này</b> — lưu một lần để tạo; sau đó tab Tài khoản mới có ô "riêng".'}</p>
-    <fieldset><legend>Farm</legend>${farmFields(farm, maps, null)}</fieldset>
+    <fieldset><legend>Farm</legend>${farmFields(farm, maps)}</fieldset>
     ${secSave("def", "Lưu farm mặc định")}
   </section>`;
   const wire = (root) => {
@@ -840,50 +844,110 @@ let devTimer = null;
 // thông báo thao tác gần nhất — giữ qua các lần tự làm mới (re-render xoá DOM)
 let devMsg = "", devMsgErr = false;
 
-async function renderWorkers() {
-  const rows = await api("GET", "/api/workers");
-  const fmt = (w) => {
-    if (w.error) return `<span style="color:var(--red)">file lỗi</span>`;
-    if (!w.running) return `<span style="color:var(--ink-dim)">dừng</span>`;
-    const st = w.state || {};
-    const where = st.task ? ` — ${st.task}/${st.state || "?"}` : "";
-    return `<span style="color:var(--jade)">đang chạy</span>`
-      + `<span class="meta" style="font-family:var(--mono)"> pid ${w.pid}${where}</span>`;
-  };
-  const items = rows.map((w) => `
-    <fieldset class="dev-card" data-open="${w.stem}" title="Bấm để mở tài khoản ${w.stem}" style="margin-bottom:12px">
+const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const OP_LABEL = { start: "đang bật máy & đăng nhập", stop: "đang dừng", restart: "đang chạy lại",
+  provision: "đang cấp máy mới", "watchdog:start": "tự phục hồi: đang chạy lại worker",
+  "watchdog:reboot": "tự phục hồi: đang khởi động lại máy", "watchdog:kill_hung": "tự phục hồi: đang dừng worker treo",
+  start_all: "đang chạy toàn hệ thống", stop_all: "đang dừng toàn hệ thống", restart_all: "đang chạy lại toàn hệ thống" };
+const SYS_LABEL = { start_all: "Chạy tất cả", stop_all: "Dừng tất cả", restart_all: "Chạy lại tất cả" };
+const fmtSecs = (s) => s >= 60 ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}` : `${Math.round(s)}s`;
+
+// Pha của thẻ do server tính (fleet.device_phase) — giao diện chỉ vẽ theo
+function deviceCard(w) {
+  const st = w.state || {}, h = w.health || {};
+  const btn = (op, label, cls = "") => `<button class="btn ${cls}" data-op="${op}" data-stem="${w.stem}">${label}</button>`;
+  const reason = esc(h.reason || st.reason || st.status || "");
+  let tone = "dim", head = "", detail = "", buttons = "";
+  switch (w.error ? "broken" : w.phase) {
+    case "broken":
+      tone = "red"; head = "File cấu hình lỗi"; detail = esc(w.error).slice(0, 160); break;
+    case "busy":
+      tone = "amber"; head = (OP_LABEL[w.op] || `đang ${w.op}`) + "…"; detail = "các nút tạm khoá tới khi xong"; break;
+    case "running": {
+      tone = "jade"; head = "Đang chạy";
+      detail = `pid ${w.pid}${st.task ? ` — ${esc(st.task)}/${esc(st.state || "?")}` : ""}`;
+      buttons = btn("restart", "Chạy lại") + btn("stop", "Dừng", "danger"); break;
+    }
+    case "failed":
+      tone = "red"; head = "Lỗi — đang tự phục hồi";
+      detail = `<span title="${reason}">${reason.slice(0, 140)}</span><br>`
+        + (h.retry_in != null ? `tự chạy lại sau <b>${fmtSecs(h.retry_in)}</b>` : "đang chờ chạy lại")
+        + ` · lần hỏng ${h.failures_last_hour || 0}/${h.limit_per_hour || "?"} trong 1 giờ`
+        + ((h.consecutive || 0) >= 2 ? " · sẽ khởi động lại cả máy" : "");
+      buttons = btn("restart", "Chạy lại ngay", "gold") + btn("stop", "Dừng", "danger"); break;
+    case "needs_human":
+      tone = "red"; head = "Cần người xử lý — đã ngừng tự phục hồi";
+      detail = `<span title="${reason}">${reason.slice(0, 160)}</span>`;
+      buttons = btn("restart", "Chạy lại", "gold") + btn("stop", "Dừng / tắt máy", "danger"); break;
+    case "device_on":
+      tone = "amber"; head = "Máy đang bật — worker chưa chạy";
+      detail = st.status === "aborted" || st.status === "crashed" ? `lần trước: <span title="${reason}">${reason.slice(0, 120)}</span>` : "";
+      buttons = btn("start", "Chạy worker", "gold") + btn("stop", "Tắt máy", "danger"); break;
+    default:
+      head = w.instance == null && w.ldplayer_index == null ? "Chưa có máy" : "Máy tắt";
+      detail = st.status === "aborted" || st.status === "crashed" ? `lần trước: <span title="${reason}">${reason.slice(0, 120)}</span>` : "";
+      buttons = w.ldplayer_index == null && w.instance == null
+        // acc chưa có máy: chỉ được cấp máy; acc đã có máy: chỉ được mở
+        ? btn("provision", "Cấp máy mới", "gold")
+        : btn("start", "Mở &amp; đăng nhập", "gold");
+  }
+  return `
+    <fieldset class="dev-card tone-${tone}" data-open="${w.stem}" title="Bấm để mở tài khoản ${w.stem}">
       <div class="row" style="align-items:center">
-        <div style="flex:2">
-          <b>${w.name || w.stem}</b>
-          <span class="meta" style="display:block; color:var(--ink-dim); font-family:var(--mono); font-size:12.5px">
-            ${w.stem}.yaml · ${w.adb_serial || "?"} · ${machineLabel(w.ldplayer_index)}</span>
+        <div style="flex:2; min-width:0">
+          <b>${esc(w.name || w.stem)}</b>${w.role === "main" ? ' <span class="role main">main</span>' : ""}
+          <span class="meta">${w.stem}.yaml · ${esc(w.adb_serial || "?")} · ${machineLabel(w.ldplayer_index)}</span>
         </div>
-        <div style="flex:2">${fmt(w)}</div>
-        <div style="flex:3; display:flex; gap:8px; justify-content:flex-end">
-          ${w.running
-            ? `<button class="btn" data-op="restart" data-stem="${w.stem}">Chạy lại</button>
-               <button class="btn danger" data-op="stop" data-stem="${w.stem}">Dừng</button>`
-            : w.ldplayer_index == null
-              // acc chưa có máy: chỉ được cấp máy; acc đã có máy: chỉ được mở
-              ? `<button class="btn gold" data-op="provision" data-stem="${w.stem}" title="Nhân bản instance LDPlayer mẫu cho acc này (chỉ trên server Windows)">Cấp máy mới</button>`
-              : `<button class="btn gold" data-op="start" data-stem="${w.stem}">Mở &amp; đăng nhập</button>`}
+        <div style="flex:3; min-width:0">
+          <span class="dev-head">${head}</span>
+          ${detail ? `<span class="meta">${detail}</span>` : ""}
+        </div>
+        <div style="flex:2; display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap">${buttons}</div>
+      </div>
+    </fieldset>`;
+}
+
+async function renderWorkers() {
+  const [rows, sys] = await Promise.all([
+    api("GET", "/api/workers"),
+    api("GET", "/api/system").catch(() => ({ op: null })),
+  ]);
+  const sysBusy = !!sys.op;
+  const counts = rows.reduce((m, w) => (m[w.phase] = (m[w.phase] || 0) + 1, m), {});
+  const red = (counts.failed || 0) + (counts.needs_human || 0);
+  const sysLine = sysBusy
+    ? `<b>${SYS_LABEL[sys.op]}</b>: ${sys.done}/${sys.total}${sys.current ? ` — ${esc(sys.current)}` : ""}…`
+    : sys.last_op
+      ? `Lần trước: ${SYS_LABEL[sys.last_op]} xong${sys.errors && sys.errors.length ? ` — ${sys.errors.length} lỗi: ${esc(sys.errors.join("; ")).slice(0, 220)}` : " ✓"}`
+      : "";
+  $("#main").innerHTML = `
+  <div class="page" style="max-width:820px">
+    <h2>Thiết bị &amp; worker</h2>
+    <p class="lead">Mỗi tài khoản một tiến trình worker riêng. Máy đang <b>chạy</b> mà gặp lỗi (mất kết nối, kẹt, treo)
+    sẽ báo đỏ và <b>tự phục hồi</b>; bấm <b>Dừng</b> là tool thôi can thiệp máy đó. Tự làm mới mỗi 5 giây.</p>
+    <fieldset class="sysbar"><legend>Toàn hệ thống</legend>
+      <div class="row" style="align-items:center; flex-wrap:wrap">
+        <div style="flex:1; min-width:220px">
+          <span class="dev-head">${counts.running || 0} đang chạy · ${counts.busy || 0} đang xử lý${red ? ` · <span style="color:var(--red)">${red} lỗi</span>` : ""}</span>
+          <span class="meta" id="sysLine">${sysLine}</span>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap">
+          <button class="btn gold" data-sys="start" ${sysBusy ? "disabled" : ""} title="Bật máy + worker cho mọi acc farm (acc main chỉ mở khi chuyển vàng)">Chạy tất cả</button>
+          <button class="btn" data-sys="restart" ${sysBusy ? "disabled" : ""} title="Dừng sạch tất cả rồi bật lại">Chạy lại tất cả</button>
+          <button class="btn danger" data-sys="stop" ${sysBusy ? "disabled" : ""} title="Dừng sạch mọi worker và tắt mọi máy LDPlayer">Dừng tất cả</button>
         </div>
       </div>
-    </fieldset>`).join("");
-  $("#main").innerHTML = `
-  <div class="page" style="max-width:760px">
-    <h2>Thiết bị &amp; worker</h2>
-    <p class="lead">Mỗi tài khoản một tiến trình worker riêng (<code>python -m vhtk.worker</code>).
-    "Dừng" tạo kill-switch <code>STOP.&lt;acc&gt;</code> — worker dừng sạch ở điểm an toàn,
-    các worker khác không bị ảnh hưởng. Tự làm mới mỗi 5 giây.</p>
+    </fieldset>
     <div id="workerMsg" class="msg" style="color:${devMsgErr ? "var(--red)" : "var(--ink-dim)"}; margin-bottom:12px">${devMsg}</div>
-    ${items || '<p class="lead">Chưa có tài khoản nào — tạo ở tab Tài khoản trước.</p>'}
+    ${rows.map(deviceCard).join("") || '<p class="lead">Chưa có tài khoản nào — tạo ở tab Tài khoản trước.</p>'}
   </div>`;
+  if (sysBusy) for (const b of document.querySelectorAll("[data-op]")) b.disabled = true;
   const setMsg = (text, isErr) => {
     devMsg = text; devMsgErr = !!isErr;
     const el = $("#workerMsg");
     if (el) { el.textContent = text; el.style.color = isErr ? "var(--red)" : "var(--ink-dim)"; }
   };
+  const refreshSoon = () => setTimeout(() => { if (tab === "dev") renderWorkers().catch(renderError); }, 400);
   // bấm vào thẻ (ngoài các nút) -> sang tab Tài khoản, mở đúng acc
   for (const card of document.querySelectorAll(".dev-card"))
     card.onclick = (ev) => {
@@ -893,18 +957,33 @@ async function renderWorkers() {
   for (const btn of document.querySelectorAll("[data-op]"))
     btn.onclick = async () => {
       const { op, stem } = btn.dataset;
-      if (op === "stop" && !confirm(`Dừng worker ${stem}? (dừng sạch ở điểm an toàn, có thể mất tới 2 phút)`)) return;
+      if (op === "stop" && !confirm(`Dừng ${stem}? Worker dừng sạch ở điểm an toàn (tối đa ~2 phút), máy được tắt, tool thôi tự phục hồi máy này.`)) return;
       btn.disabled = true;
-      setMsg(`Đang ${op === "stop" ? "dừng" : "khởi động"} ${stem}... (mở máy + đăng nhập có thể mất vài phút)`);
+      setMsg(`${stem}: ${OP_LABEL[op] || op}... (mở máy + đăng nhập có thể mất vài phút)`);
+      // server khoá máy ngay khi nhận lệnh -> làm mới để thẻ hiện "đang xử lý"
+      const req = api("POST", `/api/workers/${stem}/${op}`);
+      refreshSoon();
       try {
-        const r = await api("POST", `/api/workers/${stem}/${op}`);
+        const r = await req;
         setMsg(`${stem}: ${r.status}${r.pid ? ` (pid ${r.pid})` : ""} ✓`);
       } catch (e) { setMsg(`${stem}: ${errText(e)}`, true); }
       if (tab === "dev") renderWorkers().catch(renderError);
     };
+  for (const btn of document.querySelectorAll("[data-sys]"))
+    btn.onclick = async () => {
+      const op = btn.dataset.sys;
+      const ask = { start: "Bật máy + worker cho MỌI acc farm?",
+        restart: "Dừng sạch TẤT CẢ rồi bật lại? (có thể mất vài phút)",
+        stop: "Dừng sạch MỌI worker và TẮT mọi máy LDPlayer? Tool sẽ thôi tự phục hồi." }[op];
+      if (!confirm(ask)) return;
+      try {
+        await api("POST", `/api/system/${op}`);
+        setMsg("");
+      } catch (e) { setMsg(errText(e), true); }
+      refreshSoon();
+    };
 }
 
-/* ---- tab An toàn ---- */
 /* ---- điều hướng ---- */
 // lỗi tải trang (server cũ thiếu endpoint, server chết...) phải HIỆN RA,
 // không được nuốt im lặng — người dùng tưởng bấm không ăn

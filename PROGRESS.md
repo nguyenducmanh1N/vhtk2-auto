@@ -16,10 +16,11 @@ Cập nhật lần cuối: 2026-11-07. Kế hoạch chi tiết từng giai đo�
 | 4.3–4.5 | sell, equipment, skill_verify | ⬜ Chưa làm (stub) |
 | D1 | App desktop — quản lý tài khoản & an toàn (`python -m vhtk.ui`): CRUD acc trên YAML giữ comment, tab An toàn có dải trạng thái bảo vệ; FastAPI + web UI, pywebview tuỳ chọn | ✅ Xong, đã verify bằng trình duyệt |
 | D1b | Cài đặt chung (2026-11-07): `settings.account_defaults.farm` làm mặc định cho mọi acc, file acc chỉ ghi trường "riêng"; GUI tab Cài đặt chung (An toàn · Farm mặc định · Thông số farm · Chiêu) + ô tích "riêng" ở tab Tài khoản | ✅ Xong, 330 test, verify trình duyệt |
+| D1c | Điều khiển toàn hệ thống (Chạy/Chạy lại/Dừng tất cả) + watchdog tự phục hồi (thẻ đỏ, backoff, leo thang khởi động lại máy) + đồng bộ trang Thiết bị (trạng thái máy LDPlayer, khoá thao tác chống bấm trùng) | 🔶 Xong trên Mac (AVD), chờ nghiệm thu Windows + template mất kết nối từ LDPlayer |
 | 5 | Orchestrator đa instance + notify Telegram | 🔶 W2-prep XONG trên Mac (2026-10-28): worker process + registry + supervisor + scheduler + API/GUI; còn nghiệm thu thật trên Windows (W1→W2). Notify Telegram thật chưa làm |
 | W3 | R4 chuyển vàng về main (giao dịch trực tiếp) | 🔶 Code + test xong trên Mac (2026-11-04): đọc tiền OCR, cờ ngưỡng, 2 FSM giao dịch, hàng rào file, coordinator mở main on-demand. **Chặn bởi UI contract**: chưa có ảnh khung giao dịch (template `trade/`, toạ độ `coordinates.trade`, template `common/btn_bag`) |
 
-Kiểm tra hiện tại: **330 test pass**, `ruff check` sạch, `mypy --strict` sạch (31 file).
+Kiểm tra hiện tại: **356 test pass**, `ruff check` sạch, `mypy --strict` sạch (32 file).
 
 ## Giai đoạn 0 — Bộ khung
 

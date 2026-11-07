@@ -172,6 +172,19 @@ giao dịch 2 nhân vật).
 
 ---
 
+**Điều khiển toàn hệ thống + tự phục hồi (D1c)** — tab **Thiết bị**:
+
+- Khung **Toàn hệ thống**: *Chạy tất cả* (bật máy + worker mọi acc farm, acc
+  main chỉ mở khi chuyển vàng) · *Chạy lại tất cả* · *Dừng tất cả* (dừng sạch
+  + tắt máy LDPlayer). Không vượt `max_concurrent_instances`.
+- Thẻ **đỏ "Lỗi — đang tự phục hồi"**: worker chết (mất kết nối, kẹt, crash)
+  hoặc treo; tool tự chạy lại sau 1 → 3 → 10 phút, từ lần hỏng thứ 2 liên
+  tiếp thì khởi động lại cả máy. Thẻ **đỏ "Cần người xử lý"**: quá 5 lần/giờ
+  hoặc lỗi chạy lại cũng không hết (thiếu template, sai server, túi đầy...) —
+  đọc lý do trên thẻ, sửa rồi bấm *Chạy lại*.
+- Bấm **Dừng** (một máy hoặc tất cả) = tool thôi tự phục hồi máy đó.
+- Cấu hình: `settings.yaml` → `orchestrator.watchdog`.
+
 ## Những chỗ dễ vấp trên máy trắng
 
 - **`./vhtk` là script bash, KHÔNG chạy trên Windows** — dùng GUI (tab

@@ -266,6 +266,29 @@ thì tự mở bind + đặt token trong settings). Giao diện đặt tại `sr
   mới · ✅ bỏ tích "riêng" rồi lưu → trường biến mất khỏi file acc · ✅ file acc
   cũ ghi đủ vẫn chạy (mọi ô hiện "riêng").
 
+### D1c — Điều khiển toàn hệ thống + tự phục hồi (bổ sung 2026-11-07)
+
+- **Đồng bộ trang Thiết bị:** thẻ máy theo `phase` do server tính
+  (`fleet.device_phase`): busy · running · failed (đỏ, đang tự phục hồi) ·
+  needs_human (đỏ) · device_on (máy bật, chưa có worker) · off. Trạng thái
+  máy lấy từ `ldconsole list2` (hoặc `adb devices` khi không quản lý
+  instance). `fleet.OpLocks`: mỗi máy một thao tác — bấm "Mở & đăng nhập" lần
+  2 lúc máy đang boot -> 409 (trước đây mở trùng).
+- **Toàn hệ thống:** Chạy tất cả (acc farm; main vẫn on-demand) · Chạy lại
+  tất cả · Dừng tất cả (dừng sạch song song + tắt máy). Chạy nền, GUI hiện tiến độ.
+- **Watchdog** (`orchestrator.watchdog`): acc "muốn chạy" (`desired.json`)
+  mà worker chết/treo (không nhịp tim > `hang_timeout`) -> thẻ đỏ, chạy lại
+  sau 60/180/600s; từ lần hỏng thứ 2 liên tiếp khởi động lại cả máy; quá
+  `max_restarts_per_hour` -> "cần người". Không bao giờ tự chạy lại lỗi cần
+  người (`fleet.needs_human`: VERIFY_HUD/config, login sai server, vượt giới
+  hạn an toàn, túi đầy không bán được, config hỏng). Bấm Dừng = thôi can thiệp.
+- **Còn thiếu (chờ ảnh LDPlayer):** template hộp thoại mất kết nối chụp trên
+  LDPlayer (bộ `v1.0/common` hiện chép từ AVD) + popup "…giây sau sẽ kết nối
+  lại / Lập tức kết nối".
+- **DoD trên Mac (AVD) ✅:** Chạy tất cả -> chạy; kill -9 worker -> thẻ đỏ
+  sau ≤10s, tự chạy lại đúng 60s; Dừng tất cả -> dừng sạch ~10s, không tự
+  bật lại. **Còn phải nghiệm thu trên Windows** (nhiều máy + tắt/bật LDPlayer).
+
 ### D2 — Quản lý thiết bị (cần W2 vì phụ thuộc ldconsole + orchestrator API)
 
 - Bảng instance LDPlayer (từ `ldconsole list2`): trạng thái chạy/tắt, acc đang gán,
