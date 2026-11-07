@@ -213,9 +213,15 @@ def fake_ld(
     *,
     vms_dir: Path | None = None,
     free: int = 10**15,
+    quit_lag: int = 0,
 ) -> LDPlayerManager:
-    """LDPlayerManager over a fake ldconsole: list2/isrunning/launch/copy."""
+    """LDPlayerManager over a fake ldconsole: list2/isrunning/launch/copy.
+
+    ``quit_lag``: number of ``isrunning`` calls that still answer "running"
+    after ``quit`` (real LDPlayer shuts the VM down asynchronously).
+    """
     names: dict[int, str] = {}
+    quitting: dict[int, int] = {}
 
     def runner(args: list[str]) -> str:
         cmd = args[0]
@@ -225,12 +231,21 @@ def fake_ld(
                 for i, running in sorted(instances.items())
             )
         if cmd == "isrunning":
-            return "running" if instances.get(int(args[2]), False) else "stop"
+            index = int(args[2])
+            if quitting.get(index, 0) > 0:
+                quitting[index] -= 1
+                if quitting[index] == 0:
+                    instances[index] = False
+            return "running" if instances.get(index, False) else "stop"
         if cmd == "launch":
+            quitting.pop(int(args[2]), None)
             instances[int(args[2])] = True
             return ""
         if cmd == "quit":
-            instances[int(args[2])] = False
+            if quit_lag:
+                quitting[int(args[2])] = quit_lag
+            else:
+                instances[int(args[2])] = False
             return ""
         if cmd == "copy":
             assert clone_index is not None
@@ -273,6 +288,29 @@ def test_managed_stop_quits_instance(tmp_path: Path) -> None:
     h.supervisor.start("farm01")
     h.supervisor.stop("farm01")
     assert instances[3] is False
+
+
+def test_managed_restart_relaunches_after_slow_quit(tmp_path: Path) -> None:
+    # lỗi thực tế 07/11 acc 002: `ldconsole quit` trả về ngay, máy còn "running"
+    # vài giây -> start bỏ qua launch, máy tắt hẳn -> "did not boot within 180s"
+    settings = make_settings(tmp_path, manage_instances=True, boot_timeout=30.0)
+    write_test_account(tmp_path, "farm01", index=3)
+    instances = {3: False}
+    calls: list[str] = []
+    ld = fake_ld(instances, quit_lag=3)
+    inner = ld._runner
+
+    def runner(args: list[str]) -> str:
+        calls.append(args[0])
+        return inner(args)
+
+    ld._runner = runner
+    h = Harness(tmp_path, settings, ld=ld)
+    h.supervisor.start("farm01")
+    calls.clear()
+    h.supervisor.restart("farm01")
+    assert calls.index("quit") < calls.index("launch")  # có launch lại sau quit
+    assert instances[3] is True
 
 
 def test_provision_clones_template_and_starts(tmp_path: Path) -> None:

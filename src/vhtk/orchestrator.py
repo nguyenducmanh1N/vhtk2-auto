@@ -374,8 +374,17 @@ class WorkerSupervisor:
         if index is None:
             return
         try:
+            if not self._ld.is_running(index):
+                return
+            self._ld.stop(index)
+            # `ldconsole quit` trả về ngay, máy ảo tắt dần sau đó. Không chờ thì
+            # restart -> start thấy máy "running" nên bỏ qua launch, máy tắt hẳn
+            # -> chờ boot hết hạn ("did not boot within ...", lỗi 07/11 acc 002)
+            deadline = self._clock() + self._cfg.stop_timeout
+            while self._ld.is_running(index) and self._clock() < deadline:
+                self._sleep(1.0)
             if self._ld.is_running(index):
-                self._ld.stop(index)
+                log.warning("instance still running after quit", stem=stem, index=index)
         except VhtkError as exc:
             log.warning("cannot quit instance", stem=stem, index=index, error=str(exc))
 
