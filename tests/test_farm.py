@@ -827,7 +827,8 @@ def test_farm_low_hp_at_start_signals_retreat_first(tmp_path: Path) -> None:
     result = task.run()
     assert result.status is TaskStatus.SUCCESS
     assert task.signal is FarmSignal.HP_LOW
-    assert len(device.taps) == 1  # đúng một lần: tắt auto trước khi bàn giao
+    # bàn giao NGAY, không tap gì — retreat tự tắt auto (đỡ ~4-5s chịu đòn)
+    assert device.taps == []
 
 
 def test_farm_monitor_signals_on_hp_emergency(tmp_path: Path) -> None:
@@ -847,7 +848,7 @@ def test_farm_monitor_signals_on_hp_emergency(tmp_path: Path) -> None:
     result = task.run()
     assert result.status is TaskStatus.SUCCESS
     assert task.signal is FarmSignal.HP_LOW
-    assert len(device.taps) == 1
+    assert device.taps == []  # auto vẫn bật — retreat tắt
 
 
 def test_read_distrusts_hp_when_hud_invisible(tmp_path: Path) -> None:
@@ -968,6 +969,10 @@ def test_retreat_full_cycle_rests_until_hp_recovers(tmp_path: Path) -> None:
     assert result.status is TaskStatus.SUCCESS
     assert device.texts == []  # không gõ gì — di chuyển bằng tap lên ảnh bản đồ
     assert retreat_spot in device.taps
+    # tắt auto là cú tap ĐẦU TIÊN (trước cả mở map) và đã được xác minh tắt
+    assert device.taps[0] == auto_center
+    assert device.taps.index(auto_center) < device.taps.index(coords.minimap)
+    assert TPL_AUTO_OFF in vision.present
     # REST phải NGỒI xuống nghỉ (hồi máu nhanh) — thế giới giả đã lật sang "Đứng"
     assert TPL_BTN_STAND in vision.present
 

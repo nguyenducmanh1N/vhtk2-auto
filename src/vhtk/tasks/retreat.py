@@ -8,6 +8,13 @@ quota covers that (revive -> resume at VERIFY_HUD -> route again).
 
 The runner drives the cycle: FarmTask signals HP_LOW -> RetreatTask -> back
 to FarmTask. This task never decides anything beyond "am I rested yet".
+
+Speed matters here — the character stands among mobs with low HP until
+pathfinding starts. Each screenshot costs ~1s on the AVD, so VERIFY_HUD reads
+everything it can from ONE frame (screen, auto, sitting, current map) and
+NAVIGATE does auto-off + open map + pick map + tap spot in one state (one
+recovery pass instead of four). Auto-off is tapped without waiting and
+verified once travel has started (measured 2026-11-07: ~23 -> ~11 shots).
 """
 
 from __future__ import annotations
@@ -26,7 +33,7 @@ from vhtk.core.errors import (
     VerifyFailed,
 )
 from vhtk.core.fsm import ABORT, DONE, BaseTask, State, TaskContext
-from vhtk.core.vision import bar_fill_percent
+from vhtk.core.vision import Image, bar_fill_percent
 from vhtk.mapstore import MapStore, maps_dir
 from vhtk.tasks.farm import TPL_HUD
 from vhtk.tasks.navigate import (
@@ -43,10 +50,7 @@ from vhtk.tasks.navigate import (
 log = structlog.get_logger(__name__)
 
 S_VERIFY_HUD = "VERIFY_HUD"
-S_DISABLE_AUTO = "DISABLE_AUTO"
-S_OPEN_MAP = "OPEN_MAP"
-S_SELECT_MAP = "SELECT_MAP"
-S_TAP_SPOT = "TAP_SPOT"
+S_NAVIGATE = "NAVIGATE"
 S_TRAVEL = "TRAVEL_WAIT"
 S_REST = "REST"
 
@@ -65,26 +69,25 @@ class RetreatTask(BaseTask):
         self._nav = Navigator(ctx, coords.farm, ctx.settings.farm, store=store)
         self._hp_rect = coords.farm.hp_bar_rect
         self._nav_attempts = 0
+        # khung VERIFY_HUD vừa chụp — NAVIGATE dùng lại 1 lần cho đỡ chụp
+        self._hud_frame: Image | None = None
         super().__init__(ctx)
 
     def states(self) -> Sequence[State]:
         cfg = self.ctx.settings.farm
         return [
-            State(S_VERIFY_HUD, self._verify_hud, 30.0, frozenset({S_DISABLE_AUTO})),
-            State(S_DISABLE_AUTO, self._disable_auto, 15.0, frozenset({S_OPEN_MAP})),
-            State(S_OPEN_MAP, self._open_map, cfg.map_timeout, frozenset({S_SELECT_MAP})),
-            State(S_SELECT_MAP, self._select_map, cfg.map_timeout, frozenset({S_TAP_SPOT})),
+            State(S_VERIFY_HUD, self._verify_hud, 30.0, frozenset({S_NAVIGATE})),
             State(
-                S_TAP_SPOT,
-                self._tap_spot,
-                cfg.map_timeout + cfg.travel_start_timeout,
-                frozenset({S_TRAVEL, S_OPEN_MAP, S_REST}),
+                S_NAVIGATE,
+                self._navigate,
+                3 * cfg.map_timeout + cfg.travel_start_timeout,
+                frozenset({S_TRAVEL, S_NAVIGATE, S_REST}),
             ),
             State(
                 S_TRAVEL,
                 self._travel_wait,
                 cfg.travel_timeout,
-                frozenset({S_REST, S_OPEN_MAP}),
+                frozenset({S_REST, S_NAVIGATE}),
             ),
             State(S_REST, self._rest, cfg.rest_timeout, frozenset({DONE})),
         ]
@@ -122,36 +125,45 @@ class RetreatTask(BaseTask):
             )
             return ABORT
         # nhiều mỏ neo HUD — như FarmTask: chỗ đông người che mất nút Auto
-        hit = self.ctx.vision.wait_any(
-            [TPL_HUD, TPL_BTN_SIT, TPL_BTN_STAND, TPL_BTN_CONFIRM_COORDS], timeout=20.0
+        anchors = [TPL_HUD, TPL_BTN_SIT, TPL_BTN_STAND, TPL_BTN_CONFIRM_COORDS]
+        # thử 1 khung trước và GIỮ nó cho NAVIGATE (đọc auto/ngồi/map không
+        # tốn thêm lần chụp); chưa thấy mỏ neo nào mới poll như cũ
+        frame: Image | None = self.ctx.vision.capture_screen()
+        hit_name = next(
+            (n for n in anchors if self.ctx.vision.find(n, screenshot=frame) is not None), None
         )
-        if hit is None:
-            raise StateTimeout("neither HUD nor map screen is showing")
-        if hit[0] == TPL_BTN_CONFIRM_COORDS:
+        if hit_name is None:
+            hit = self.ctx.vision.wait_any(anchors, timeout=20.0)
+            if hit is None:
+                raise StateTimeout("neither HUD nor map screen is showing")
+            hit_name, frame = hit[0], None
+        if hit_name == TPL_BTN_CONFIRM_COORDS:
             self._nav.close_map()
-        return S_DISABLE_AUTO
+            frame = None
+        self._hud_frame = frame
+        return S_NAVIGATE
 
-    def _disable_auto(self) -> str:
-        """Stop fighting before walking out — auto would re-engage mobs."""
-        try:
-            self._nav.set_auto(False)
-        except (StateTimeout, VerifyFailed):
-            log.warning("auto did not switch off before retreat")
-        return S_OPEN_MAP
+    def _navigate(self) -> str:
+        """Auto off -> stand -> open map -> pick the town -> tap the spot.
 
-    def _open_map(self) -> str:
-        # nhân vật ngồi (đả toạ) thì game từ chối tìm đường — đứng dậy trước
-        self._nav.ensure_standing()
-        self._nav.open_map()
-        return S_SELECT_MAP
-
-    def _select_map(self) -> str:
-        if not self._nav.in_map(self._farm.retreat_map):
-            self._nav.select_map(self._farm.retreat_map)
-        return S_TAP_SPOT
-
-    def _tap_spot(self) -> str:
+        One state on purpose: every state boundary costs a recovery
+        screenshot, and the character is taking hits until it walks off.
+        """
         cfg = self.ctx.settings.farm
+        frame, self._hud_frame = self._hud_frame, None
+        # tắt auto: auto còn bật thì game lôi nhân vật quay lại đánh quái.
+        # Tap KHÔNG chờ — xác minh dời tới sau khi đã chạy (_confirm_auto_off)
+        auto_on, btn = self._nav.auto_state(frame)
+        if auto_on and btn is not None:
+            # tap auto chỉ đổi NÚT auto — nút Ngồi/Đứng, tên map, nút bản đồ
+            # trong khung vẫn đúng, nên giữ khung cho các kiểm tra dưới
+            self.ctx.device.tap(*btn.center)
+        # nhân vật ngồi (đả toạ) thì game từ chối tìm đường — đứng dậy trước
+        self._nav.ensure_standing(frame)
+        here = self._nav.in_map(self._farm.retreat_map, frame=frame)
+        self._nav.open_map(frame)
+        if not here:
+            self._nav.select_map(self._farm.retreat_map)
         x, y = self._nav.resolve_spot(self._farm.retreat_spot)
         try:
             self._nav.tap_map_point(x, y)
@@ -180,9 +192,17 @@ class RetreatTask(BaseTask):
             if self._nav_attempts >= 2 and cfg.unstick_npc_row:
                 self._nav.unstick_via_npc(cfg.unstick_npc_row, cfg.unstick_walk_seconds)
             log.warning("travel did not start, redoing navigation", attempt=self._nav_attempts)
-            return S_OPEN_MAP
+            return S_NAVIGATE
         self._nav_attempts = 0
+        self._confirm_auto_off()
         return S_TRAVEL
+
+    def _confirm_auto_off(self) -> None:
+        """Verify step of the deferred auto-off tap, now that we are moving."""
+        try:
+            self._nav.set_auto(False)
+        except (StateTimeout, VerifyFailed):
+            log.warning("auto did not switch off during retreat")
 
     def _travel_wait(self) -> str:
         try:
@@ -194,7 +214,7 @@ class RetreatTask(BaseTask):
                 log.error("travel keeps stalling, giving up", attempts=self._nav_attempts)
                 return ABORT
             log.warning("travel stalled, redoing navigation", attempt=self._nav_attempts)
-            return S_OPEN_MAP
+            return S_NAVIGATE
         self._nav_attempts = 0
         return S_REST
 

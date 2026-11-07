@@ -7,8 +7,10 @@ Design notes:
   seconds it grabs ONE frame and checks: auto still on (re-enable if not),
   still in the farm map, HP level (color read of the HUD bar — no OCR).
 - Per PLAN.md, MONITOR only RAISES SIGNALS (``FarmSignal``) for the runner;
-  it never handles them itself. On ``HP_LOW`` the task switches auto off and
-  finishes — the runner then runs ``RetreatTask`` and loops back to farm.
+  it never handles them itself. On ``HP_LOW`` the task finishes AT ONCE with
+  auto still on (it keeps fighting/potting meanwhile) — ``RetreatTask``
+  switches auto off as part of its first move; other signals switch auto off
+  here before finishing.
 - Decision logic lives in ``MonitorPolicy`` (pure, unit-testable): consecutive
   low-HP cycles, unreadable-frame streaks, auto re-enable quota.
 - Like login, every entry state routes itself from whatever screen is showing,
@@ -281,7 +283,7 @@ class FarmTask(BaseTask):
                 S_VERIFY_HUD,
                 self._verify_hud,
                 30.0,
-                frozenset({S_OPEN_MAP, S_MONITOR, S_DISABLE_AUTO}),
+                frozenset({S_OPEN_MAP, S_MONITOR, S_DISABLE_AUTO, DONE}),
             ),
             State(S_OPEN_MAP, self._open_map, cfg.map_timeout, frozenset({S_SELECT_MAP})),
             State(S_SELECT_MAP, self._select_map, cfg.map_timeout, frozenset({S_TAP_SPOT})),
@@ -306,7 +308,7 @@ class FarmTask(BaseTask):
                 S_MONITOR,
                 self._monitor,
                 float("inf"),
-                frozenset({S_DISABLE_AUTO, S_OPEN_MAP}),
+                frozenset({S_DISABLE_AUTO, S_OPEN_MAP, DONE}),
             ),
             State(S_DISABLE_AUTO, self._disable_auto, 15.0, frozenset({DONE})),
         ]
@@ -379,7 +381,7 @@ class FarmTask(BaseTask):
             # chết tiếp giữa đường; phát HP_LOW để runner cho đi nghỉ trước
             log.warning("HP already low before farming, signalling retreat first", hp=round(hp, 1))
             self.signal = FarmSignal.HP_LOW
-            return S_DISABLE_AUTO
+            return DONE  # retreat tự tắt auto — mỗi giây đứng đây là ăn đòn
         if self._nav.auto_state(frame)[0] is True:
             here = self._nav.in_map(self._farm.map, frame=frame)
             if here is None:
@@ -526,7 +528,9 @@ class FarmTask(BaseTask):
             if action is MonitorAction.SIGNAL_HP_LOW:
                 self.signal = FarmSignal.HP_LOW
                 log.warning("HP low, signalling retreat", hp=reading.hp_percent)
-                return S_DISABLE_AUTO
+                # bàn giao NGAY, auto vẫn bật (vẫn đánh/uống thuốc) — retreat
+                # tắt auto trong bước đầu; tắt ở đây tốn ~4-5s đứng chịu đòn
+                return DONE
             if action is MonitorAction.SIGNAL_BAG_FULL:
                 self.signal = FarmSignal.BAG_FULL
                 log.warning("bag full, signalling sell trip")

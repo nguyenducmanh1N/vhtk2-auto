@@ -115,12 +115,15 @@ class Navigator:
 
     # -- character state ----------------------------------------------------------
 
-    def ensure_standing(self) -> None:
+    def ensure_standing(self, frame: Image | None = None) -> None:
         """Stand up if the character is sitting (đả toạ blocks pathfinding).
 
         The bottom-left HUD button is a toggle: its label reads "Đứng" while
         sitting and "Ngồi" while standing. Missing templates are tolerated
         (old template sets) — the travel then fails loudly at wait_arrival.
+
+        Args:
+            frame: a frame the caller has just captured; saves a screenshot.
         """
         if self.missing_templates(TPL_BTN_STAND, TPL_BTN_SIT):
             log.warning("stand/sit templates missing, skipping stand check")
@@ -129,7 +132,8 @@ class Navigator:
         # Đứng/Ngồi — recovery cố ý không đóng nó (workspace marker), nên
         # phải tự dọn ở đây trước khi thao tác với HUD
         # 1 khung hình cho cả 2 kiểm tra — mỗi lần chụp trên AVD tốn ~1s
-        frame: Image | None = self.ctx.vision.capture_screen()
+        if frame is None:
+            frame = self.ctx.vision.capture_screen()
         if self.map_is_open(frame):
             log.info("stray map screen open, closing before stand check")
             self.close_map()
@@ -245,13 +249,16 @@ class Navigator:
         self._require_templates(TPL_BTN_CONFIRM_COORDS)
         return self.ctx.vision.find(TPL_BTN_CONFIRM_COORDS, screenshot=frame) is not None
 
-    def open_map(self) -> None:
+    def open_map(self, frame: Image | None = None) -> None:
         """Open the map screen from the HUD (idempotent).
+
+        Args:
+            frame: a frame the caller has just captured; saves a screenshot.
 
         Raises:
             StateTimeout: the map screen did not appear.
         """
-        if self.map_is_open():
+        if self.map_is_open(frame):
             return
         log.warning("using fallback coordinates", target="minimap", xy=self.coords.minimap)
         self.ctx.device.tap(*self.coords.minimap)
